@@ -3,7 +3,7 @@ import '@fontsource-variable/geist-mono';
 import './style.css';
 import { DESTINATIONS, CONTRACTS, PAYLOADS, PARAMS, STEPS, FLYBYS } from './data.js';
 import {
-  budgets, parts, simulate, explain, launchConditions, teamCode, ESTIMATE, paramVal,
+  budgets, budgetMargins, parts, simulate, explain, launchConditions, teamCode, ESTIMATE, paramVal,
   isComplete, cheapestFull, mulberry32, launchCapacity, fmtYr, fmtGb,
 } from './model.js';
 import { consideration } from './considerations.js';
@@ -12,10 +12,14 @@ import {
 } from './charts.js';
 import { COUPLING, BUDGET_LABEL, couplingMap } from './coupling.js';
 import { ICON, MARK } from './icons.js';
+import { craftSVG } from './craft.js';
+import { createScene } from './scene.js';
 
 // ---------- flags + state ----------
 const query = new URLSearchParams(location.search);
 const DEBUG = query.has('debug');
+// ?demo: three contracts, three different traps (deadline + battery, dust storm + mass, radiation + power).
+const DEMO_IDS = query.has('demo') ? ['lunar-survey', 'mars-survey', 'europa-spec'] : null;
 const URL_SEED = query.has('seed') ? Math.abs(parseInt(query.get('seed'), 10)) || 1 : null;
 const STORE = 'mission-design-v3';
 
@@ -26,29 +30,31 @@ const STEP = Object.fromEntries(STEPS.map((s) => [s.key, s]));
 const STEP_NAME = { contract: 'Contract', review: 'Review', launch: 'Launch' };
 const stepName = (k) => STEP_NAME[k] || STEP[k].label;
 
-// Which budget graphs each screen moves the most.
+// Silos: each screen shows only the budgets it governs (plus total cost and mass).
+// The whole dashboard waits for the review, where the subsystems get integrated.
 const SCREEN_CHARTS = {
-  power: ['power', 'night', 'mass'],
-  thermal: ['thermal', 'rad', 'power'],
-  comms: ['data', 'power'],
-  traj: ['time', 'cost', 'life'],
-  engine: ['dv', 'power', 'life'],
-  tank: ['dv', 'mass'],
-  launcher: ['mass', 'cost'],
+  power: ['power', 'night'], thermal: ['thermal', 'rad'], comms: ['data'],
+  traj: ['time', 'dv'], engine: ['dv', 'time'], tank: ['dv'], launcher: ['mass'],
 };
+
+// Who holds the phone on each screen.
+const ROLE = {
+  power: 'Power & Thermal Lead', thermal: 'Power & Thermal Lead', comms: 'Comms Lead',
+  traj: 'Propulsion & Trajectory Lead', engine: 'Propulsion & Trajectory Lead', tank: 'Propulsion & Trajectory Lead',
+};
+const roleBadge = (k) => (ROLE[k] ? `Pass phone → ${ROLE[k]}` : 'Role: Flight Director');
 
 const blank = () => ({
   contract: null, engine: null, traj: null, launcher: null,
   ...Object.fromEntries(Object.entries(PARAMS).map(([k, p]) => [k, p.def])),
 });
-const fresh = () => ({ step: 0, design: blank(), attempt: 1, seed: URL_SEED ?? 1000 + Math.floor(Math.random() * 9000), history: [], open: [] });
+const fresh = () => ({ step: 0, design: blank(), attempt: 1, seed: URL_SEED ?? 1000 + Math.floor(Math.random() * 9000), history: [] });
 
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE));
     if (!s || !s.design || typeof s.step !== 'number') return null;
     if (URL_SEED != null && s.seed !== URL_SEED) return null;
-    s.open = s.open || [];
     return s;
   } catch { return null; }
 }
@@ -56,6 +62,7 @@ let state = load() || fresh();
 let ripple = null; // budgets the last change moved (attempt 2+)
 let dragBefore = null; // margins when a slider drag started
 let anim = null; // running launch animation handle
+let speed = 1; // launch playback speed (2x toggle, attempt 2+)
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* private mode */ } };
 
 const $app = document.getElementById('app');
@@ -74,13 +81,8 @@ const canGoBack = () => state.attempt > 1;
 // ---------- budget chips + graphs (attempt 2+) ----------
 function charts() { return isComplete(state.design) ? buildCharts(state.design, ESTIMATE) : null; }
 
-function healthInner(ch) {
-  return CHART_ORDER.filter((k) => ch[k]).map((k) => `<button class="hchip ${ch[k].status} ${state.open.includes(k) ? 'open' : ''}" data-act="chart" data-k="${k}"><i class="dot"></i>${CHART_LABEL[k]}</button>`).join('');
-}
-
 function graphsInner(ch, screen) {
-  const all = [...new Set([...SCREEN_CHARTS[screen], ...state.open])].filter((k) => ch[k]);
-  return all.map((k) => renderChart(ch[k])).join('');
+  return [...new Set([...SCREEN_CHARTS[screen], 'cost', 'mass'])].filter((k) => ch[k]).map((k) => renderChart(ch[k])).join('');
 }
 
 // ---------- coupling: what a choice feeds, and what the last change moved ----------
@@ -171,7 +173,7 @@ function liveStats(k) {
     const heat = D.coldW * part.heaterFactor; if (heat > 0) add('W heater here', R(heat));
   } else if (k === 'comms') {
     const down = (part.rateGb * D.contact) / (D.earthAU * D.earthAU);
-    add('W', part.powerW); add(`Gbit/yr from ${D.name}`, down >= 100 ? R(down) : down.toFixed(1));
+    add('W from bus', part.powerW); add('x sun heat', part.heatFlux.toFixed(2)); add(`Gbit/yr from ${D.name}`, down >= 100 ? R(down) : down.toFixed(1));
   } else if (k === 'tank') add('kg fuel', R(part.prop));
   return s.join('');
 }
@@ -181,7 +183,7 @@ function header() {
   const n = state.step;
   return `<header class="top">
     <div class="top-row"><div class="brand">${MARK}Mission Design${DEBUG ? ' <span class="dbg">debug</span>' : ''}</div><span class="attempt">Attempt ${state.attempt}</span></div>
-    <div class="countdown"><b>${n === FLOW.length - 1 ? 'T+0' : `T−${FLOW.length - 1 - n}`}</b> · ${stepName(key())}</div>
+    <div class="countdown"><b>${n === FLOW.length - 1 ? 'T+0' : `T−${FLOW.length - 1 - n}`}</b> · ${stepName(key())} <span class="role-badge">${roleBadge(key())}</span></div>
     <i class="prog" style="width:${(100 * n) / (FLOW.length - 1)}%"></i>
   </header>`;
 }
@@ -210,7 +212,7 @@ function debugBar() {
 
 function screenContract() {
   const sel = state.design.contract;
-  const cards = CONTRACTS.map((C) => {
+  const cards = CONTRACTS.filter((C) => !DEMO_IDS || DEMO_IDS.includes(C.id)).map((C) => {
     const D = DESTINATIONS.find((x) => x.id === C.dest); const pay = PAYLOADS.find((x) => x.id === C.payload);
     return `<button class="dest ${sel === C.id ? 'sel' : ''}" data-act="contract" data-id="${C.id}">
       <div class="dest-top"><span class="planet" style="--c:${D.color}"></span>
@@ -236,7 +238,7 @@ function screenChoice(k) {
   const step = STEP[k]; const D = dest();
   const c = consideration(k, D, state.design);
   const ch = showBudgets() ? charts() : null;
-  return `${header()}${ch ? `<div class="health" id="health">${healthInner(ch)}</div>` : ''}<main>${debugBar()}
+  return `${header()}<main>${debugBar()}
     <section class="consider">
       <div class="eyebrow"><span class="role">${step.role}</span></div>
       <h1>${esc(c.title)}</h1>
@@ -244,9 +246,10 @@ function screenChoice(k) {
       <ul class="here">${c.here.map((h) => `<li>${esc(h)}</li>`).join('')}</ul>
       <div class="feeds"><span>Ripples into</span>${COUPLING[k].map((b) => `<i>${BUDGET_LABEL[b]}</i>`).join('')}</div>
     </section>
+    <div class="craft-wrap" id="craft">${craftSVG(state.design, { screen: k })}</div>
     ${step.params ? slidersHTML(step) : optionsHTML(step)}
     <div id="rip">${rippleHTML()}</div>
-    ${ch ? `<section class="graphs"><h2>Your budgets</h2><p class="note">Blue is your design. Orange is the limit. Tap a chip above to add a graph.</p><div class="chart-grid" id="chart-grid">${graphsInner(ch, k)}</div></section>` : ''}
+    ${ch ? `<section class="graphs"><h2>Your budgets</h2><p class="note">Your subsystem, plus total cost and mass. Blue is your design, orange the limit. Nominal margins: no mass growth, no anomaly. The whole dashboard is at Review.</p><div class="chart-grid" id="chart-grid">${graphsInner(ch, k)}</div></section>` : ''}
   </main>${nav(canNext())}`;
 }
 
@@ -256,8 +259,9 @@ function refreshDynamic() {
   const ch = showBudgets() ? charts() : null;
   resetCharts();
   const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
-  if (ch) { set('health', healthInner(ch)); set('chart-grid', graphsInner(ch, k)); }
+  if (ch) set('chart-grid', graphsInner(ch, k));
   if (step && step.params) set('live', liveStats(k));
+  set('craft', craftSVG(state.design, { screen: k }));
   set('rip', rippleHTML());
   const next = document.querySelector('[data-act=next]'); if (next) next.disabled = !canNext();
 }
@@ -272,6 +276,7 @@ function screenReview() {
   ].map(([a, v]) => `<div class="kv"><span>${a}</span><b>${esc(v)}</b></div>`).join('');
   if (!showBudgets()) {
     return `${header()}<main><h1>Final design</h1><p class="lead">${esc(C.name)}. Launch it and see what happens.</p>
+      <div class="craft-wrap">${craftSVG(d)}</div>
       <div class="costbox">${rows}</div>
     </main>${nav(true, 'Launch')}`;
   }
@@ -280,7 +285,9 @@ function screenReview() {
   const reds = keys.filter((k) => ch[k].status === 'red').length; const yellows = keys.filter((k) => ch[k].status === 'yellow').length;
   const over = b.cost > b.budget;
   return `${header()}<main><h1>Design review</h1>
-    <div class="summary">${reds ? `<b class="red-t">${reds} failing</b> · ` : ''}${yellows ? `<b class="yellow-t">${yellows} thin</b> · ` : ''}${!reds && !yellows ? '<b class="green-t">All clear</b> · ' : ''}Real hardware comes out heavier. Leave margin.</div>
+    <div class="craft-wrap">${craftSVG(d)}</div>
+    <div class="summary">${reds ? `<b class="red-t">${reds} failing</b> · ` : ''}${yellows ? `<b class="yellow-t">${yellows} thin</b> · ` : ''}${!reds && !yellows ? '<b class="green-t">All clear</b>' : ''}</div>
+    <div class="unlock">Nominal margins shown. Launch adds 0–15% dry-mass growth + 1 deep-space anomaly.</div>
     <div class="chart-grid">${keys.map((k) => renderChart(ch[k])).join('')}</div>
     <details class="picks"><summary>Your design</summary><div class="costbox">${rows}</div></details>
     ${over ? `<div class="warn">Launch blocked: over budget by $${R(b.cost - b.budget)}M.</div>` : ''}
@@ -295,8 +302,11 @@ const tierName = (o) => ({ none: 'No mission', min: 'Minimum', full: 'Full succe
 // ---------- launch screen ----------
 function screenLaunch() {
   return `${header()}<main class="launch">
+    <div id="banner"></div>
+    ${state.attempt > 1 ? '<button class="btn small ff" data-act="ff" aria-pressed="false">2x &gt;&gt;</button>' : ''}
     <div class="phase-name" id="phase">Countdown</div>
     <div class="clock" id="clock">T-0</div>
+    <div class="scene-wrap" id="scene"></div>
     <div class="track" id="track"></div>
     <div class="phases" id="phases"></div>
     <ul class="log" id="log"></ul>
@@ -306,8 +316,12 @@ function screenLaunch() {
 
 function startLaunch() {
   const d = state.design;
-  const cond = launchConditions(state.seed, state.attempt);
+  // Attempt 1 flies even over budget, so every team sees a real failure mode.
+  const cond = { ...launchConditions(state.seed, state.attempt), bailout: state.attempt === 1 };
   const res = simulate(d, cond);
+  if (res.b.cost > res.b.budget && cond.bailout) {
+    document.getElementById('banner').innerHTML = `<div class="warn">Over budget by $${R(res.b.cost - res.b.budget)}M — emergency bailout granted for Attempt 1 flight test!</div>`;
+  }
   const b = res.b; const cruise = b.tr.cruise; const end = cruise + b.D.opsYears;
   const f = res.failure;
   const stopT = f && !f.partial ? f.t : end;
@@ -348,7 +362,13 @@ function startLaunch() {
   document.getElementById('phases').innerHTML = ['Liftoff', 'Cruise', 'Arrival', 'Operations'].map((p, i) => `<span id="ph${i}">${p}</span>`).join('');
 
   const log = document.getElementById('log');
-  let next = 0; const t0 = performance.now();
+  const scene = createScene(document.getElementById('scene'), { design: d, b, failure: f });
+  const phaseStart = [0, P.lift, P.lift + P.cruise, P.lift + P.cruise + P.arr]; const phaseLen = [P.lift, P.cruise, P.arr, P.ops];
+  const finalPose = () => (!f || f.partial ? { ph: 3, p: 1 }
+    : f.phase === 'review' ? { ph: 0, p: 0 } : f.phase === 'launch' ? { ph: 0, p: 0.85 }
+      : f.phase === 'cruise' ? { ph: 1, p: f.t / cruise } : f.phase === 'arrival' ? { ph: 2, p: 0.7 } : { ph: 3, p: (f.t - cruise) / (end - cruise) });
+  // Virtual clock so the 2x toggle can change speed mid-flight.
+  let next = 0; let clock = 0; let last = performance.now(); speed = 1;
   const phaseAt = (ms) => (ms < P.lift ? 0 : ms < P.lift + P.cruise ? 1 : ms < P.lift + P.cruise + P.arr ? 2 : 3);
   const missionT = (ms) => {
     if (ms < P.lift) return 0;
@@ -358,13 +378,16 @@ function startLaunch() {
   };
 
   function frame(now) {
-    const ms = Math.min(now - t0, stopMs);
+    clock += (now - last) * speed; last = now;
+    const ms = Math.min(clock, stopMs);
     const ph = phaseAt(ms);
-    const tm = Math.min(missionT(ms), stopT);
+    const tm = instant ? stopT : Math.min(missionT(ms), stopT);
     document.getElementById('phase').textContent = f && f.phase === 'review' ? 'Program review' : ['Liftoff', 'Cruise', 'Arrival burn', 'Operations'][ph];
     document.getElementById('clock').textContent = ph === 0 ? 'T+0' : `Year ${tm.toFixed(1)}`;
     document.getElementById('fill').style.width = pos(tm);
     for (let i = 0; i < 4; i++) document.getElementById(`ph${i}`).className = i < ph ? 'done' : i === ph ? 'now' : '';
+    const pose = instant ? finalPose() : { ph, p: Math.min(1, (ms - phaseStart[ph]) / phaseLen[ph]) };
+    scene.update({ ...pose, ms, dead: !!f && !f.partial && (instant || ms >= stopMs) });
     while (next < beats.length && beats[next].ms <= ms) {
       const bt = beats[next++];
       log.insertAdjacentHTML('afterbegin', `<li class="${bt.cls}">${bt.cls === 'ok' ? ICON.check : bt.cls === 'fail' ? ICON.x : bt.cls === 'warn' ? ICON.alert : ICON.info}<span>${esc(bt.text)}</span></li>`);
@@ -373,7 +396,7 @@ function startLaunch() {
     // Timers (not requestAnimationFrame) so the launch keeps going if the phone is backgrounded.
     if (ms < stopMs) anim = setTimeout(() => frame(performance.now()), 33);
     else if (instant) { anim = null; showResult(res); }
-    else anim = setTimeout(() => { anim = null; showResult(res); }, 900);
+    else anim = setTimeout(() => { anim = null; showResult(res); }, 900 / speed);
   }
   frame(performance.now());
 }
@@ -396,6 +419,8 @@ function showResult(res) {
   const fk = chartForFailure(f, res.b);
   const failChart = ch && fk && ch[fk] ? renderChart(ch[fk]) : '';
   const map = f ? `<p class="a-sub">The failure traces back to these choices:</p>${couplingMap(d, partName, fk)}` : '';
+  const later = f ? downstream(res, fk) : [];
+  const warnLater = later.length ? `<div class="warn">Downstream Warning: Even if you survived ${fk ? CHART_LABEL[fk].toLowerCase() : 'that'}, this design also failed ${later.map((k) => CHART_LABEL[k].toLowerCase()).join(' and ')}.</div>` : '';
   document.getElementById('result').innerHTML = `
     <div class="outcome ${res.outcome}">
       <div class="o-tier">${tierName(res.outcome)}</div>
@@ -406,8 +431,10 @@ function showResult(res) {
         <div><span>Team code</span><b class="code">${code}</b></div>
       </div>
       <div class="o-note">${res.points} science pts × ${D.mult} (${esc(C.name)})</div>
+      ${res.outcome !== 'none' ? `<div class="o-note">Your Cost: $${R(res.cost)}M | Target Par Cost: $${C.par}M</div>` : ''}
     </div>
     ${f ? `<section class="anomaly"><h2>Anomaly report</h2><p class="a-what">${esc(f.text)}</p>
+      ${warnLater}
       ${failChart}
       ${map}
       <p class="a-sub">The chain of cause and effect:</p>
@@ -421,7 +448,17 @@ function showResult(res) {
       <button class="btn primary" data-act="redesign">Redesign · Attempt ${state.attempt + 1}</button>
       <button class="btn ghost" data-act="newcontract">Change contract</button>
     </div>`;
+  document.querySelector('.ff')?.remove();
   if (!DEBUG) document.getElementById('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Chief engineer's note: up to two other budgets that would also have killed this design,
+// from later failures in the flight, then anything already broken on paper.
+function downstream(res, fk) {
+  const keys = (res.others || []).map((o) => chartForFailure(o, res.b));
+  const M = budgetMargins(budgets(state.design, ESTIMATE));
+  keys.push(...Object.keys(M).filter((k) => M[k] < 0));
+  return [...new Set(keys)].filter((k) => k && k !== fk).slice(0, 2);
 }
 
 function closestCall(b) {
@@ -474,10 +511,9 @@ $app.addEventListener('click', (e) => {
     state.design[el.dataset.slot] = el.dataset.id;
     ripple = computeRipple(before, showBudgets() ? margins() : null);
     save(); keepScroll();
-  } else if (act === 'chart') {
-    const k = el.dataset.k;
-    state.open = state.open.includes(k) ? state.open.filter((x) => x !== k) : [...state.open, k];
-    save(); keepScroll();
+  } else if (act === 'ff') {
+    speed = speed === 1 ? 2 : 1;
+    el.setAttribute('aria-pressed', String(speed === 2));
   } else if (act === 'next') {
     if (key() === 'contract' && DEBUG && !state.design.engine) autoPick('random');
     go(Math.min(FLOW.length - 1, state.step + 1));

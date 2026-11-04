@@ -30,7 +30,7 @@ const BUILDERS = {
 
   thermal: (D, d) => ({
     title: `Heat and radiation at ${D.name}`,
-    why: 'Radiators shed heat. Shielding blocks radiation and insulates. Both add mass, and heaters cost power.',
+    why: 'Radiators shed heat, but they leak it in the cold too, so more radiator means more heater power. Shielding blocks radiation and insulates. Both add mass.',
     here: [
       {
         mercury: `The Sun is ${D.hotFlux}x Earth's.`,
@@ -49,7 +49,7 @@ const BUILDERS = {
     const pay = C ? PAYLOADS.find((x) => x.id === C.payload) : null;
     return {
       title: `Talking to Earth from ${D.name}`,
-      why: 'Science only counts once it reaches Earth. Data rate grows with dish area and transmitter power, and fades with distance squared.',
+      why: 'Science only counts once it reaches Earth. Data rate grows with dish area and transmitter power, and fades with distance squared. The amplifier is 33% efficient: each radio watt draws 3 W and adds mass, cost and heat.',
       here: [
         `${D.name} is ${D.earthAU} AU from Earth.`,
         pay ? `Your ${pay.name.toLowerCase()} makes ${pay.genGb} Gbit per year. Goal: ${C.goalGb} Gbit.` : null,

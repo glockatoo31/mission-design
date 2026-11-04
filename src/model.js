@@ -36,7 +36,7 @@ function thermalPart(d) {
   return {
     name: `${n1(R_)} m² radiators, ${n1(S)} cm shielding`, short: `${n1(R_)} m² rad · ${n1(S)} cm`,
     hotLimit: THERMAL.hotBase + THERMAL.hotPerRad * R_,
-    heaterFactor: Math.max(THERMAL.heaterMin, THERMAL.heaterBase - THERMAL.heaterPerShield * S - THERMAL.heaterPerRad * R_),
+    heaterFactor: Math.max(THERMAL.heaterMin, THERMAL.heaterBase + THERMAL.heaterPerRad * R_ - THERMAL.heaterPerShield * S),
     radTol: THERMAL.radTolBase + THERMAL.radTolPerShield * S,
     mass: THERMAL.massBase + THERMAL.massPerRad * R_ + THERMAL.massPerShield * S,
     cost: THERMAL.costBase + THERMAL.costPerRad * R_ + THERMAL.costPerShield * S,
@@ -48,8 +48,9 @@ function commsPart(d) {
   const dish = paramVal(d, 'dish'); const tx = paramVal(d, 'txPower');
   return {
     name: `${n1(dish)} m dish, ${tx} W`, short: `${n1(dish)} m · ${tx} W`,
-    rateGb: COMMS.rateK * dish * dish * tx, powerW: tx,
-    mass: COMMS.massBase + COMMS.massPerD2 * dish * dish, cost: COMMS.costBase + COMMS.costPerD2 * dish * dish,
+    rateGb: COMMS.rateK * dish * dish * tx, txW: tx, powerW: COMMS.drawPerTxW * tx, heatFlux: COMMS.heatPerTxW * tx,
+    mass: COMMS.massBase + COMMS.massPerD2 * dish * dish + COMMS.massPerTxW * tx,
+    cost: COMMS.costBase + COMMS.costPerD2 * dish * dish + COMMS.costPerTxW * tx,
     life: COMMS.lifeBase - COMMS.lifePerD * dish,
   };
 }
@@ -135,7 +136,7 @@ export const STORM_YEARS = 0.1; // how long the Mars dust storm lasts
 // cruise sunshade (about Earth level) until arrival. Plus the Venus flyby spike.
 export function heatAt(t, b) {
   const { P, D, tr } = b;
-  const rtg = P.power.rtgUnits * RTG_HOT_FLUX;
+  const rtg = P.power.rtgUnits * RTG_HOT_FLUX + P.comms.heatFlux;
   let f = t >= tr.cruise ? D.hotFlux : Math.min(1, Math.pow(D.hotFlux, t / tr.cruise));
   if (tr.flyby === 'venus' && Math.abs(t - tr.flybyYear) <= FLYBY_WIDTH) f = Math.max(f, FLYBYS.venus.flux);
   return f + rtg;
@@ -239,7 +240,7 @@ export function budgets(d, opts = ESTIMATE) {
 
   // Thermal (hot side; cold side shows up as heater power)
   if (D) {
-    r.hotFlux = D.hotFlux + P.power.rtgUnits * RTG_HOT_FLUX;
+    r.hotFlux = D.hotFlux + P.power.rtgUnits * RTG_HOT_FLUX + P.comms.heatFlux;
     r.hotLimit = P.thermal.hotLimit;
     r.thermalMargin = (r.hotLimit - r.hotFlux) / r.hotLimit;
   } else { r.thermalMargin = null; }
@@ -275,7 +276,7 @@ export function budgets(d, opts = ESTIMATE) {
   if (tr && tr.flyby) {
     const fb = FLYBYS[tr.flyby];
     if (tr.flyby === 'venus') {
-      r.flybyFlux = fb.flux + P.power.rtgUnits * RTG_HOT_FLUX;
+      r.flybyFlux = fb.flux + P.power.rtgUnits * RTG_HOT_FLUX + P.comms.heatFlux;
       r.flybyMargin = (P.thermal.hotLimit - r.flybyFlux) / P.thermal.hotLimit;
     } else {
       r.flybyDose = D.cruiseDosePerYr * tr.flybyYear + fb.dose + (ev.dose || 0);
@@ -324,8 +325,8 @@ export function simulate(d, opts = NOMINAL) {
   const fails = [];
   const fail = (t, phase, mode, text, extra = {}) => fails.push({ t, phase, mode, text, hazard: hazardMode(D) === mode, ...extra });
 
-  // Review gate
-  if (b.cost > b.budget) {
+  // Review gate (opts.bailout: attempt 1 flies anyway so every team sees a real failure)
+  if (b.cost > b.budget && !opts.bailout) {
     return finish(b, opts, [], { t: 0, phase: 'review', mode: 'cost', text: `Program review: over budget by $${R(b.cost - b.budget)}M. Contract cancelled before launch.` });
   }
 
@@ -395,7 +396,21 @@ export function simulate(d, opts = NOMINAL) {
   if (D.id === 'pluto') events.push({ t: cruise + 0.05, phase: 'ops', kind: 'hazard', text: 'Faint signal' });
 
   fails.sort((a, b2) => a.t - b2.t);
-  return finish(b, opts, events, fails[0] || null);
+  // others: failures the design would have hit later (for the downstream warning)
+  return { ...finish(b, opts, events, fails[0] || null), others: fails.slice(1) };
+}
+
+// One margin per budget graph: the numbers the review dashboard and the balance test use.
+export function budgetMargins(b) {
+  const min = (...ms) => { const n = ms.filter((m) => typeof m === 'number'); return n.length ? Math.min(...n) : null; };
+  const m = {
+    power: min(b.powerMargin, b.ionMargin, b.D.id === 'mars' ? b.hazardMargin : null),
+    thermal: min(b.thermalMargin, b.tr.flyby === 'venus' ? b.flybyMargin : null),
+    rad: min(b.radMargin, b.tr.flyby === 'jupiter' ? b.flybyMargin : null),
+    data: b.dataMargin, time: b.timeMargin, cost: b.costMargin, mass: b.massMargin, dv: b.dvMargin, life: b.lifeMargin,
+  };
+  if (b.D.id === 'moon') m.night = b.hazardMargin;
+  return m;
 }
 
 function hazardMode(D) {
@@ -492,7 +507,7 @@ export function explain(d, res) {
       if (P.power.hasSolar) dist.push(`${D.name} at ${D.sunAU} AU -> sunlight ${pctSun(D)} of Earth's`);
       if (P.power.hasRtg) dist.push(`RTGs decay ${(P.power.decay * 100).toFixed(1)}%/yr`);
       chains.push([
-        `Load: bus ${BUS.powerW} W + ${P.payload.name} ${P.payload.powerW} W + antenna ${P.comms.powerW} W = ${R(b.mainLoad)} W`,
+        `Load: bus ${BUS.powerW} W + ${P.payload.name} ${P.payload.powerW} W + transmitter ${P.comms.powerW} W (${P.comms.txW} W RF at 33%) = ${R(b.mainLoad)} W`,
         `${P.power.name}: ${R(P.power.solarW + P.power.rtgW)} W at Earth`, ...dist,
         `Year ${fmtYr(f.t, true)} -> only ${R(f.supply)} W`, `Short by ${R(b.mainLoad - f.supply)} W -> brownout`,
       ]);
@@ -501,7 +516,7 @@ export function explain(d, res) {
     }
     case 'freeze': {
       chains.push([
-        `${D.name} is cold -> ${n1(P.thermal.heaterFactor)}x heater factor needs ${R(b.heater)} W of heaters`,
+        `${D.name} is cold -> ${n1(paramVal(d, 'radiator'))} m² of radiators leak heat (heater factor ${n1(P.thermal.heaterFactor)}x) -> ${R(b.heater)} W of heaters`,
         `Heater added to load -> ${R(b.load)} W total`,
         `${P.power.name} gives ${R(f.supply)} W here (year ${fmtYr(f.t, true)})`,
         'Heaters starved -> froze',
@@ -512,6 +527,7 @@ export function explain(d, res) {
     case 'overheat': {
       const c = [`${D.name}: ${D.hotFlux}x Earth sunlight`];
       if (units) c.push(`RTG waste heat adds +${n1(units * RTG_HOT_FLUX)}x`);
+      c.push(`${P.comms.txW} W transmitter's amplifier adds +${P.comms.heatFlux.toFixed(2)}x`);
       c.push(`${n1(paramVal(d, 'radiator'))} m² of radiators reject ${n1(P.thermal.hotLimit)}x`, 'Overheated on arrival');
       chains.push(c);
       break;
@@ -520,6 +536,7 @@ export function explain(d, res) {
       if (tr.flyby === 'venus') {
         const c = [`${trLabel} -> pass Venus at 0.7 AU`, `Sunlight ${FLYBYS.venus.flux}x Earth`];
         if (units) c.push(`+ RTG waste heat ${n1(units * RTG_HOT_FLUX)}x`);
+        c.push(`+ transmitter amplifier ${P.comms.heatFlux.toFixed(2)}x`);
         c.push(`Radiators reject ${n1(P.thermal.hotLimit)}x -> overheated in year ${fmtYr(tr.flybyYear, true)}`);
         chains.push(c);
       } else {
@@ -632,7 +649,7 @@ export const GRID = {
   radiator: [0, 4, 8],
   shield: [0, 4, 10],
   dish: [0.3, 1.2, 3],
-  txPower: [20, 60],
+  txPower: [10, 40],
   fuel: [100, 300, 600, 1100, 1500],
 };
 

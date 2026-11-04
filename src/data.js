@@ -33,14 +33,19 @@ export const FLYBYS = {
 export const SOLAR = { wPerM2: 150, massBase: 8, massPerM2: 2.3, costBase: 6, costPerM2: 0.9, life: 12 };
 export const RTG = { unitW: 300, mass: 110, cost: 120, decay: 0.015, life: 20 };
 export const BATTERY = { massBase: 5, massPerKWh: 4, costBase: 0.5, costPerKWh: 0.8, defaultKWh: 2 };
-// Radiator area raises the heat limit; shielding raises radiation tolerance and insulates (cuts heater power).
+// Radiator area raises the heat limit but leaks heat in the cold (more heater power);
+// shielding raises radiation tolerance and insulates (less heater power).
 export const THERMAL = {
   massBase: 12, massPerRad: 3.5, massPerShield: 6.3, costBase: 8, costPerRad: 1.75, costPerShield: 2.2,
   hotBase: 2.5, hotPerRad: 1.1, radTolBase: 30, radTolPerShield: 27,
-  heaterBase: 1, heaterPerShield: 0.05, heaterPerRad: 0.025, heaterMin: 0.4, life: 15, lifePerRad: 0.55,
+  heaterBase: 1, heaterPerShield: 0.05, heaterPerRad: 0.12, heaterMin: 0.4, life: 15, lifePerRad: 0.55,
 };
-// Downlink rate grows with dish area and transmitter power.
-export const COMMS = { rateK: 133, massBase: 3, massPerD2: 4, costBase: 5, costPerD2: 3.3, lifeBase: 20, lifePerD: 2.7 };
+// Downlink rate grows with dish area and transmitter (RF) power. The amplifier is 33% efficient:
+// each RF watt draws 3 W from the bus and adds amplifier mass, cost, and waste heat (x sun).
+export const COMMS = {
+  rateK: 133, massBase: 3, massPerD2: 4, costBase: 5, costPerD2: 3.3, lifeBase: 20, lifePerD: 2.7,
+  drawPerTxW: 3, massPerTxW: 0.15, costPerTxW: 0.15, heatPerTxW: 0.015,
+};
 export const TANK = { massBase: 5, massPerKg: 0.068, costBase: 3, costPerKg: 0.015, life: 30 };
 
 // Slider definitions: range, step, default, and what the screen calls them.
@@ -51,7 +56,7 @@ export const PARAMS = {
   radiator: { label: 'Radiator area', unit: 'm²', min: 0, max: 8, step: 0.5, def: 2 },
   shield: { label: 'Radiation shielding', unit: 'cm', min: 0, max: 10, step: 0.5, def: 2 },
   dish: { label: 'Dish diameter', unit: 'm', min: 0.3, max: 3.5, step: 0.1, def: 1 },
-  txPower: { label: 'Transmitter power', unit: 'W', min: 10, max: 100, step: 5, def: 30 },
+  txPower: { label: 'Transmitter radio power', unit: 'W', min: 10, max: 100, step: 5, def: 30 },
   fuel: { label: 'Fuel', unit: 'kg', min: 50, max: 1500, step: 10, def: 400 },
 };
 
@@ -63,7 +68,7 @@ export const DESTINATIONS = [
     sunAU: 0.39, solarCap: 2.0, solarDeg: 0.07, earthAU: 1.0, contact: 0.33,
     hotFlux: 10, coldW: 0,
     cruiseDosePerYr: 2, opsDosePerYr: 15,
-    opsYears: 2, opsCostPerYr: 22, lowThrustPenalty: 1.1,
+    opsYears: 2, opsCostPerYr: 12, lowThrustPenalty: 1.1,
     traj: {
       direct: { label: 'Direct', c3: 35, dv: 2300, cruise: 1.0 },
       assist: { label: 'Venus flybys', c3: 16, dv: 1600, cruise: 6.5, flyby: 'venus', flybyYear: 2 },
@@ -133,15 +138,17 @@ export const PAYLOADS = [
 // ---------- Contracts ----------
 // The hard constraints: where, which instrument, how much science, arrive by the deadline
 // (years after launch), and the funding cap (the contract ends when the money does).
+// par: cheapest full-success cost found by the solver (npm run balance checks it). Funding is
+// set so par keeps ~12% cost margin: a design with a green cost bar is too cheap to be robust.
 export const CONTRACTS = [
-  { id: 'lunar-survey', name: 'Lunar Pathfinder', dest: 'moon', payload: 'cam', goalGb: 70, deadline: 0.25, budget: 360, brief: 'Land near the south pole. Fast and cheap.' },
-  { id: 'lunar-spec', name: 'South Pole Spectrometry', dest: 'moon', payload: 'spec', goalGb: 300, deadline: 0.5, budget: 460, brief: 'Survive the lunar night and map the ice.' },
-  { id: 'mars-survey', name: 'Mars Survey Lander', dest: 'mars', payload: 'cam', goalGb: 150, deadline: 1.5, budget: 380, brief: 'Ride out the dust storm and send pictures home.' },
-  { id: 'mars-radar', name: 'Mars Subsurface Radar', dest: 'mars', payload: 'hires', goalGb: 1500, deadline: 3, budget: 640, brief: 'Radar under the surface. Heavy, hungry, huge data.' },
-  { id: 'mercury-survey', name: 'Mercury Surveyor', dest: 'mercury', payload: 'cam', goalGb: 150, deadline: 8, budget: 600, brief: 'Orbit Mercury and map the surface.' },
-  { id: 'europa-spec', name: 'Europa Flyby Spectrometry', dest: 'europa', payload: 'spec', goalGb: 90, deadline: 7, budget: 760, brief: 'Fly past Europa before the radiation wins.' },
-  { id: 'pluto-survey', name: 'Pluto Flyby Imaging', dest: 'pluto', payload: 'cam', goalGb: 1.6, deadline: 10, budget: 800, brief: 'A decade out. Send the pictures home.' },
-  { id: 'pluto-spec', name: 'Pluto Flyby Spectrometry', dest: 'pluto', payload: 'spec', goalGb: 1.6, deadline: 9, budget: 800, brief: 'The same trip, a hungrier instrument, a tighter deadline.' },
+  { id: 'lunar-survey', name: 'Lunar Pathfinder', dest: 'moon', payload: 'cam', goalGb: 70, deadline: 0.25, budget: 235, par: 207, brief: 'Land near the south pole. Fast and cheap.' },
+  { id: 'lunar-spec', name: 'South Pole Spectrometry', dest: 'moon', payload: 'spec', goalGb: 300, deadline: 0.5, budget: 275, par: 242, brief: 'Survive the lunar night and map the ice.' },
+  { id: 'mars-survey', name: 'Mars Survey Lander', dest: 'mars', payload: 'cam', goalGb: 150, deadline: 1.5, budget: 250, par: 222, brief: 'Ride out the dust storm and send pictures home.' },
+  { id: 'mars-radar', name: 'Mars Subsurface Radar', dest: 'mars', payload: 'hires', goalGb: 1500, deadline: 3, budget: 365, par: 321, brief: 'Radar under the surface. Heavy, hungry, huge data.' },
+  { id: 'mercury-survey', name: 'Mercury Surveyor', dest: 'mercury', payload: 'cam', goalGb: 150, deadline: 8, budget: 305, par: 268, brief: 'Orbit Mercury and map the surface.' },
+  { id: 'europa-spec', name: 'Europa Flyby Spectrometry', dest: 'europa', payload: 'spec', goalGb: 90, deadline: 7, budget: 550, par: 485, brief: 'Fly past Europa before the radiation wins.' },
+  { id: 'pluto-survey', name: 'Pluto Flyby Imaging', dest: 'pluto', payload: 'cam', goalGb: 1.6, deadline: 10, budget: 545, par: 481, brief: 'A decade out. Send the pictures home.' },
+  { id: 'pluto-spec', name: 'Pluto Flyby Spectrometry', dest: 'pluto', payload: 'spec', goalGb: 1.6, deadline: 9, budget: 630, par: 553, brief: 'The same trip, a hungrier instrument, a tighter deadline.' },
 ];
 
 export const ENGINES = [

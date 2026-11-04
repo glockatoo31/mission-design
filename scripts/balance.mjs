@@ -2,7 +2,7 @@
 // using the same model code as the app, and checks the tuning targets.
 // Run: npm run balance   (add --seeds to also sweep launch conditions for seeds 1..20)
 import { CONTRACTS, DESTINATIONS, PARAMS, ENGINES, LAUNCHERS } from '../src/data.js';
-import { simulate, designGrid, NOMINAL, launchConditions } from '../src/model.js';
+import { simulate, designGrid, NOMINAL, ESTIMATE, launchConditions, budgets, budgetMargins } from '../src/model.js';
 
 const sweepSeeds = process.argv.includes('--seeds');
 const pct = (n, d) => `${((100 * n) / d).toFixed(1)}%`;
@@ -50,7 +50,17 @@ for (const C of CONTRACTS) {
     const best = full.slice().sort((a, b) => a.r.cost - b.r.cost)[0];
     console.log(`Cheapest full success: $${Math.round(best.r.cost)}M of $${C.budget}M`);
     console.log('  ' + JSON.stringify(best.d));
-  }
+    check(C.par === Math.round(best.r.cost), `${C.name}: par cost in data.js ($${C.par}M) matches the solver ($${Math.round(best.r.cost)}M)`);
+  } else check(false, `${C.name}: has a full-success design`);
+
+  // The bars show nominal margins (no mass growth, no event). Nobody should be able to make every
+  // bar green, but a winning design should exist that runs only a little thin.
+  const minMargin = (d) => Math.min(...Object.values(budgetMargins(budgets(d, ESTIMATE))).filter((m) => typeof m === 'number'));
+  const allGreen = designs.filter((d) => minMargin(d) >= 0.15).length;
+  const bestFull = full.length ? Math.max(...full.map((x) => minMargin(x.d))) : -1;
+  console.log(`Best full-success design's thinnest nominal margin: ${(bestFull * 100).toFixed(1)}%`);
+  check(allGreen === 0, `${C.name}: no design has every bar green (${allGreen} do)`);
+  check(bestFull >= 0.05 && bestFull < 0.15, `${C.name}: best winning design runs ${(bestFull * 100).toFixed(1)}% thin (want 5-14%)`);
 
   if (sweepSeeds) {
     let s = 0;
@@ -63,7 +73,8 @@ for (const C of CONTRACTS) {
 
   const fullRate = full.length / n;
   const hazardMode = { mercury: 'overheat', moon: 'night', mars: 'storm', europa: 'radiation', pluto: 'data' }[D.id];
-  check(fullRate >= 0.01 && fullRate <= 0.2, `${C.name}: full success ${pct(full.length, n)} in 1-20%`);
+  // Funding is tight on purpose, so random designs rarely win; teams iterate with the graphs instead.
+  check(full.length >= 20 && fullRate <= 0.2, `${C.name}: ${full.length} winning grid designs (>=20), ${pct(full.length, n)} of all (<=20%)`);
   check(Object.keys(modes).length >= 3, `${C.name}: ${Object.keys(modes).length} failure modes reachable (>=3)`);
   hazardSeen[D.id] = hazardSeen[D.id] || !!modes[hazardMode];
   for (const key of ['direct', 'assist']) {
@@ -89,6 +100,14 @@ for (const [key, list] of [['engine', ENGINES.map((e) => e.id)], ['launcher', LA
 for (const key of Object.keys(PARAMS)) {
   const vals = new Set(allFull.map((d) => d[key]));
   check(vals.size > 1, `${key} takes ${vals.size} different values among full successes`);
+}
+
+// Attempt-1 bailout: an over-budget design flies instead of being cancelled at program review.
+{
+  let d = null;
+  for (const x of designGrid(CONTRACTS[0].id)) if (simulate(x, NOMINAL).failure?.mode === 'cost') { d = x; break; }
+  const flown = simulate(d, { ...NOMINAL, bailout: true });
+  check(flown.failure?.mode !== 'cost', `Bailout: over-budget design flies on attempt 1 (${flown.outcome}${flown.failure ? `, ${flown.failure.mode}` : ''})`);
 }
 
 console.log('\n=== Checks ===');

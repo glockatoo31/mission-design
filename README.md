@@ -19,6 +19,10 @@ The loop follows KSP RP-1: **take a contract, build the spacecraft bus, choose t
    size and cost. Engine is a short list of real options, and fuel is a slider.
 4. **Launch vehicle.** Picked last, once the mass is locked in. Then review and launch.
 
+The spacecraft is drawn from your sliders and updates as you build (the part you are sizing lights up).
+The launch plays as an animation: liftoff, cruise along the route, then landing or orbit with a downlink
+beam home. A failure freezes it with a red mark where it happened.
+
 Each screen has a two-line intro for the chosen contract (e.g. "Power at Pluto") and a
 "Ripples into" row naming the budgets that choice feeds.
 
@@ -110,7 +114,11 @@ Make a QR code of the URL (add `?seed=N` so every team gets the same launch cond
 | `?seed=N` | Fixed randomness. Every phone with the same seed gets the same hidden mass growth and the same random event for each attempt number. Without it, each phone picks its own seed. |
 | `?debug` | Shows "Random design" / "Cheapest full success" buttons on the build screens, auto-picks a random design when you leave the contract board, and skips all timers. Full flow in ~30 seconds. |
 
-Combine them: `?seed=7&debug`.
+| `?demo` | Contract board shows only Lunar Pathfinder, Mars Survey Lander and Europa Flyby Spectrometry (three different traps). Good for a 20-minute session. |
+
+Combine them: `?seed=7&demo` (add `&debug` to rehearse).
+
+Funding is set from each contract's `par` cost in `src/data.js` (the cheapest full success the solver finds), so par keeps about 12% cost margin. If you change any number, rerun `npm run balance`: it fails if `par` is stale, if any design can get every bar green, or if the best winning design isn't 5-14% thin.
 
 ## How the model works (short)
 
@@ -157,6 +165,8 @@ Before class, on 3-4 phones (or 3-4 browser tabs, at least one on a real phone):
 - `src/considerations.js`: the short intro text for each design screen.
 - `src/icons.js`: the one icon set (lucide paths) and the flat logo mark.
 - `src/coupling.js`: which choices feed which budgets (chips, ripple, and the coupling map).
+- `src/craft.js`: the spacecraft drawing, built from the design.
+- `src/scene.js`: the launch, cruise and operations animation.
 - `src/charts.js`: budget graphs over mission time (data from `model.js`, rendered as SVG).
 - `src/main.js`, `src/style.css`: the screens.
 - `scripts/balance.mjs`: the balance test.

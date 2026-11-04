@@ -162,14 +162,6 @@ h2 { font-size: 1.0625rem; font-weight: 500; margin: 0; }
 .unlock b { color: var(--text); font-weight: 500; }
 
 /* budget chips (attempt 2+) */
-.health { position: sticky; top: var(--head); z-index: 15; display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; background: var(--bg); border-bottom: 1px solid var(--line); }
-.hchip { display: inline-flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 0 8px; line-height: 24px; font-size: .75rem; cursor: pointer; color: var(--text2); transition: background-color 160ms var(--ease), border-color 160ms var(--ease); }
-.hchip:hover { background: var(--raised); }
-.hchip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
-.hchip.yellow .dot { background: var(--amber); }
-.hchip.red .dot { background: var(--red); }
-.hchip.red { color: var(--text); }
-.hchip.open { border-color: var(--line-strong); background: var(--raised); color: var(--text); }
 
 /* coupling: ripple row and map */
 .ripple { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; font-size: .875rem; }
@@ -252,3 +244,52 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 24px;
 input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 3px solid var(--card); box-shadow: 0 0 0 1px var(--line-strong); }
 input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .stats.live { padding-top: 12px; border-top: 1px solid var(--line); }
+
+/* spacecraft drawing + launch scene: flat color, no glow. Blue = solar cells, orange = exhaust. */
+.craft-wrap, .scene-wrap { margin: 0 0 16px; background: var(--sunken); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.craft, .scene { display: block; width: 100%; height: auto; }
+.craft .part { transition: opacity 160ms var(--ease); }
+.craft.focus .part:not(.hl) { opacity: .45; }
+.craft .bus, .craft .tank, .craft .rtgbody, .craft .battery { fill: var(--raised); stroke: var(--line-strong); stroke-width: 1.5; }
+.craft .bus { stroke: rgba(237, 237, 237, .35); }
+.craft .strut, .craft .fins, .craft .cells, .craft .arcs, .craft .inst * { stroke: var(--text2); stroke-width: 1.5; fill: none; }
+.craft .cells { stroke: rgba(63, 143, 230, .55); stroke-width: 1; }
+.craft .wing { fill: #1f3d6e; stroke: #3f8fe6; stroke-width: 1.5; }
+.craft .slat rect { fill: #8f8f95; }
+.craft .nozzle, .craft .nozzle * { fill: #3a3a3e; stroke: var(--text2); stroke-width: 1.2; }
+.craft .nozzle .fins { fill: none; }
+.craft .dishbowl { fill: #c9c9cc; stroke: var(--text2); stroke-width: 1; }
+.craft .feed { fill: var(--text); }
+.craft .arcs { stroke: var(--muted); opacity: .8; }
+.craft .shieldring { fill: none; stroke: #6c6c72; }
+.craft .shieldhatch { fill: none; stroke: #a1a1a6; stroke-dasharray: 3 3; opacity: .6; }
+.craft .inst * { fill: var(--sunken); }
+.craft .inst .lens { fill: var(--accent); stroke: none; }
+.craft .hl, .craft .hl * { stroke: var(--accent); }
+.craft .hl .dishbowl { fill: #dce8ff; }
+.craft .hl.slat rect { fill: var(--accent); stroke: none; }
+.clabel { fill: var(--text); font: 11px var(--mono); }
+
+.scene .star { fill: var(--text2); opacity: .55; }
+.scene .ground { fill: var(--card); }
+.scene .rbody { fill: #d7d7da; stroke: none; }
+.scene .rband { fill: #3a3a3e; }
+.scene .flame { fill: #e0892e; }
+.scene #sc-burst line { stroke: var(--red); stroke-width: 3; stroke-linecap: round; }
+.scene #sc-dead circle { fill: none; stroke: var(--red); stroke-width: 2.5; }
+.scene #sc-dead path { stroke: var(--red); stroke-width: 2.5; stroke-linecap: round; }
+.scene .earth { fill: #3d6db3; }
+.scene .slabel { fill: var(--muted); font: 10.5px var(--mono); }
+.scene .route { fill: none; stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 3 5; }
+.scene .trail { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 0 999; }
+.scene .orbit { fill: none; stroke: var(--line-strong); stroke-dasharray: 3 5; }
+.scene .shade { fill: #000; opacity: .38; }
+.scene .beam { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 5 7; }
+.scene #sc-launch, .scene #sc-transit, .scene #sc-ops { transition: opacity 400ms var(--ease); }
+.scene #sc-dead, .scene #sc-burst { opacity: 0; }
+.craft-wrap .craft { padding: 0; }
+/* role handoff, chart margin %, 2x launch toggle */
+.role-badge { margin-left: 6px; padding: 0 6px; border: 1px solid var(--line-strong); border-radius: 6px; color: var(--text2); font-size: .75rem; }
+.c-m { margin-left: 6px; font: .75rem var(--mono); }
+.c-m.green { color: var(--green); } .c-m.yellow { color: var(--amber); } .c-m.red { color: var(--red); }
+.ff { float: right; } .ff[aria-pressed=true] { border-color: var(--accent); color: var(--text); }

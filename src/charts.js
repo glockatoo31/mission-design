@@ -5,7 +5,7 @@
 // A one-line verdict sits above each graph so nobody has to decode it.
 import { G0 } from './data.js';
 import {
-  budgets, marginColor, heatAt, doseAt, powerAt, needAt, ESTIMATE, fmtYr, fmtGb, STORM_YEARS,
+  budgets, budgetMargins, marginColor, heatAt,  doseAt, powerAt, needAt, ESTIMATE, fmtYr, fmtGb, STORM_YEARS,
 } from './model.js';
 import { BUDGET_LABEL } from './coupling.js';
 import { STATUS_ICON } from './icons.js';
@@ -38,7 +38,7 @@ function sample(f, t0, t1, extra = [], n = 140) {
 }
 
 const firstWhere = (pts, pred) => { const h = pts.find(([t, y]) => pred(t, y)); return h ? h[0] : null; };
-const minM = (...ms) => { const n = ms.filter((m) => typeof m === 'number'); return n.length ? Math.min(...n) : null; };
+
 const when = (t) => (t < 0.1 ? 'on arrival' : `in year ${fmtYr(t, true)}`);
 
 // status + margin + one-line verdict from the same number
@@ -56,6 +56,7 @@ export function buildCharts(d, opts = ESTIMATE, failure = null) {
   const b = budgets(d, opts);
   const { P, D, tr } = b;
   if (!D || !tr || !P.power || !P.thermal || !P.payload || !P.comms || !P.engine || !P.tank || !P.launcher) return null;
+  const M = budgetMargins(b);
   const cruise = tr.cruise; const end = cruise + D.opsYears;
   const stop = failure && !failure.partial && failure.t > 0 ? Math.min(end, failure.t) : end;
   const eps = 1e-4;
@@ -74,11 +75,11 @@ export function buildCharts(d, opts = ESTIMATE, failure = null) {
     const short = firstWhere(supply, (t, y) => t >= cruise && y < needAt(t, b));
     const ion = P.engine.lowThrust && b.ionMargin < 0;
     const fail = ion ? { t: cruise, y: b.supplyArrive, label: 'Ion engine starved' } : short != null ? { t: short, y: powerAt(short, b), label: 'Not enough power' } : null;
-    const m = minM(b.powerMargin, b.ionMargin, D.id === 'mars' ? b.hazardMargin : null);
+
     out.power = {
       ...base, key: 'power', title: 'Power', fmt: (v) => `${v >= 10 ? R(v) : v.toFixed(1)} W`, unit: 'W',
       series: [{ ...have(supply), name: 'Power you have' }, { name: 'Power you need', color: ORANGE, pts: need, limit: true }, { aux: true, color: ORANGE, dash: true, pts: cruise > 0.1 ? [[0, needAt(cruise, b)], [cruise, needAt(cruise, b)]] : [] }],
-      fail, ...judge(m, { ok: 'Enough power all mission', thin: 'Power is cutting it close', bad: (f) => (ion ? 'Ion engine cannot fire at arrival' : f ? `Power runs short ${when(f.t)}` : 'Not enough power') }, fail),
+      fail, ...judge(M.power, { ok: 'Enough power all mission', thin: 'Power is cutting it close', bad: (f) => (ion ? 'Ion engine cannot fire at arrival' : f ? `Power runs short ${when(f.t)}` : 'Not enough power') }, fail),
       note: `Need ${R(b.load)} W: bus + mission + antenna${b.heater ? ' + heaters' : ''}`,
     };
   }
@@ -92,8 +93,8 @@ export function buildCharts(d, opts = ESTIMATE, failure = null) {
       ...base, key: 'thermal', title: 'Heat', unit: 'x sun', fmt: (v) => `${v < 0.1 ? v.toFixed(3) : v.toFixed(1)}x sun`,
       series: [have(pts)],
       limits: [{ y: b.hotLimit, label: 'Radiator limit', dir: 'above' }],
-      fail, ...judge(minM(b.thermalMargin, tr.flyby === 'venus' ? b.flybyMargin : null), { ok: 'Stays cool enough', thin: 'Close to overheating', bad: (f) => `Overheats ${when(f ? f.t : cruise)}` }, fail),
-      note: P.power.hasRtg ? 'Includes RTG waste heat. 1x = sunlight at Earth.' : '1x = sunlight at Earth.',
+      fail, ...judge(M.thermal, { ok: 'Stays cool enough', thin: 'Close to overheating', bad: (f) => `Overheats ${when(f ? f.t : cruise)}` }, fail),
+      note: `Includes transmitter${P.power.hasRtg ? ' and RTG' : ''} waste heat. 1x = sunlight at Earth.`,
     };
   }
 
@@ -106,7 +107,7 @@ export function buildCharts(d, opts = ESTIMATE, failure = null) {
       ...base, key: 'rad', title: 'Radiation', unit: 'krad', fmt: (v) => `${R(v)} krad`,
       series: [{ ...have(pts), name: 'Dose so far' }],
       limits: [{ y: b.radTol, label: 'Shielding limit', dir: 'above' }],
-      fail, ...judge(minM(b.radMargin, tr.flyby === 'jupiter' ? b.flybyMargin : null), { ok: 'Electronics survive', thin: 'Close to the radiation limit', bad: (f) => `Electronics fail ${when(f ? f.t : cruise)}` }, fail),
+      fail, ...judge(M.rad, { ok: 'Electronics survive', thin: 'Close to the radiation limit', bad: (f) => `Electronics fail ${when(f ? f.t : cruise)}` }, fail),
       note: `${D.cruiseDosePerYr} krad/yr on the trip, ${D.opsDosePerYr} at ${D.name}${tr.flyby ? `, plus the ${tr.flyby === 'jupiter' ? 'Jupiter' : 'Venus'} flyby` : ''}`,
     };
   }
@@ -226,7 +227,7 @@ export function renderChart(spec) {
   const legend = shown.length > 1
     ? `<div class="legend">${shown.map((s) => `<span><i class="${s.dash ? 'dash' : ''}" style="--c:${s.color}"></i>${s.name}</span>`).join('')}</div>` : '';
   return `<figure class="chart st-${spec.status}">
-    <div class="c-title">${spec.title}</div>
+    <div class="c-title">${spec.title}${typeof spec.margin === 'number' ? ` <span class="c-m ${spec.status}">${spec.margin >= 0 ? '+' : '−'}${Math.abs(R(spec.margin * 100))}%</span>` : ''}</div>
     <div class="verdict ${spec.status}">${STATUS_ICON[spec.status] || STATUS_ICON.green}<span>${spec.verdict}</span></div>
     ${legend}${body}${spec.note ? `<p class="c-cap">${spec.note.replace(/\.$/, '')}</p>` : ''}</figure>`;
 }

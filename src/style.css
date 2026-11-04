@@ -1,6 +1,6 @@
 :root {
   --bg: #0b1020; --panel: #141b33; --panel2: #1b2444; --line: #2a3560;
-  --text: #eef1fb; --muted: #9aa5c8; --accent: #5aa9ff;
+  --text: #eef1fb; --orange: #c0802a; --muted: #9aa5c8; --accent: #5aa9ff;
   --green: #2ecc71; --yellow: #f5c518; --red: #ff4d5e;
   --radius: 14px;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -153,12 +153,12 @@ h2 { font-size: 1.1rem; margin: 0; }
 
 /* ---------- consideration screens ---------- */
 :root { --ink2: #9aa5c8; }
-.consider { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin-top: 8px; }
+.consider { margin-bottom: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin-top: 8px; }
 .consider h1 { margin-top: 8px; }
-.consider h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); margin: 14px 0 4px; }
+
 .consider .why { margin: 6px 0 0; line-height: 1.45; }
 .here { margin: 0; padding-left: 18px; display: grid; gap: 6px; line-height: 1.4; }
-.ask { margin: 14px 0 0; padding: 10px 12px; background: var(--panel2); border-left: 4px solid var(--accent); border-radius: 8px; font-weight: 700; }
+
 .pick-h { margin: 20px 0 8px; }
 .lock { align-self: center; color: var(--muted); font-size: .8rem; max-width: 45%; }
 .unlock { margin-top: 14px; background: #10263f; border-left: 4px solid var(--accent); padding: 10px 12px; border-radius: 8px; line-height: 1.4; }
@@ -166,7 +166,7 @@ h2 { font-size: 1.1rem; margin: 0; }
 
 /* health chips (attempt 2+) */
 .health { position: sticky; top: 74px; z-index: 15; display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 10px; background: rgba(11, 16, 32, .97); border-bottom: 1px solid var(--line); }
-.hchip { display: inline-flex; align-items: center; gap: 5px; background: var(--panel); border: 2px solid var(--line); border-radius: 999px; padding: 4px 9px; font-size: .78rem; font-weight: 700; cursor: pointer; }
+.hchip { display: inline-flex; align-items: center; gap: 4px; background: var(--panel); border: 2px solid var(--line); border-radius: 999px; padding: 2px 8px; font-size: .74rem; font-weight: 700; cursor: pointer; }
 .hchip i { font-style: normal; font-weight: 900; }
 .hchip.green { border-color: rgba(46, 204, 113, .55); } .hchip.green i { color: var(--green); }
 .hchip.yellow { border-color: var(--yellow); } .hchip.yellow i { color: var(--yellow); }
@@ -174,47 +174,66 @@ h2 { font-size: 1.1rem; margin: 0; }
 .hchip.open { box-shadow: 0 0 0 2px var(--accent); }
 .hchip.flash { animation: pop .6s ease-out; }
 
+/* ripple + coupling */
+.feeds { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 12px; font-size: .8rem; color: var(--muted); }
+.feeds i { font-style: normal; font-weight: 700; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; }
+.ripple { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 14px; }
+.rchip { font-size: .85rem; font-weight: 700; padding: 4px 10px; border-radius: 999px; border: 2px solid var(--line); background: var(--panel); }
+.rchip i { font-style: normal; color: var(--muted); }
+.rchip.down { border-color: var(--red); background: #3a1420; }
+.rchip.up { border-color: rgba(46, 204, 113, .55); }
+.green-t { color: var(--green); }
+.cmap { display: block; width: 100%; height: auto; margin: 6px 0 12px; }
+.cmap .cl { stroke: var(--line); stroke-width: 1; opacity: .8; }
+.cmap .cl.hot { stroke: var(--red); stroke-width: 2.5; opacity: 1; }
+.cmap .cn, .cmap .bn { fill: var(--panel2); stroke: var(--line); stroke-width: 1.5; }
+.cmap .cn.hot { stroke: var(--red); stroke-width: 2.5; }
+.cmap .bn.hot { fill: #3a1420; stroke: var(--red); stroke-width: 2.5; }
+.cmap .cn-t { fill: var(--text); font-size: 12.5px; font-weight: 800; }
+.cmap .cn-s { fill: var(--muted); font-size: 10.5px; }
+.cmap .bn-t { fill: var(--text); font-size: 13px; font-weight: 800; }
+.cmap .bn-t.hot { fill: var(--red); }
+
 /* charts */
 .graphs { margin-top: 22px; }
 .graphs .note { margin: 2px 0 8px; }
-.chart-grid { display: grid; gap: 10px; margin-top: 10px; }
-.chart { margin: 0; background: var(--panel); border: 2px solid var(--line); border-radius: var(--radius); padding: 10px 12px 8px; text-align: left; }
-.chart.st-red { border-color: rgba(255, 77, 94, .7); }
+.chart-grid { display: grid; gap: 12px; margin-top: 10px; }
+.chart { margin: 0; background: var(--panel); border: 2px solid var(--line); border-radius: var(--radius); padding: 12px 14px 10px; text-align: left; }
+.chart.st-red { border-color: rgba(255, 77, 94, .75); }
 .chart.st-yellow { border-color: rgba(245, 197, 24, .6); }
-.anomaly .chart { margin: 6px 0 10px; background: var(--bg); }
-.c-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.sbadge { font-size: .72rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
-.sbadge.ok { background: rgba(46, 204, 113, .18); color: var(--green); }
-.sbadge.thin { background: rgba(245, 197, 24, .18); color: var(--yellow); }
-.sbadge.bad { background: rgba(255, 77, 94, .2); color: var(--red); }
-.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: .75rem; color: var(--muted); margin-top: 4px; }
-.legend i, .tip i { display: inline-block; width: 16px; height: 0; border-top: 2px solid var(--c); vertical-align: middle; margin-right: 5px; }
+.anomaly .chart { background: var(--bg); margin: 8px 0 12px; }
+.c-title { font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.verdict { font-size: 1.2rem; font-weight: 800; margin: 2px 0 6px; line-height: 1.25; }
+.verdict.green, .verdict.none { color: var(--green); }
+.verdict.yellow { color: var(--yellow); }
+.verdict.red { color: var(--red); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .85rem; margin: 2px 0 2px; }
+.legend i, .tip i { display: inline-block; width: 18px; height: 0; border-top: 3px solid var(--c); vertical-align: middle; margin-right: 6px; border-radius: 2px; }
 .legend i.dash, .tip i.dash { border-top-style: dashed; }
 .plot { position: relative; }
 .plot svg { display: block; width: 100%; height: auto; overflow: visible; touch-action: pan-y; }
-.c-cap { color: var(--muted); font-size: .8rem; margin: 4px 0 0; line-height: 1.35; }
-.chart svg .band { fill: rgba(255, 255, 255, .035); }
-.chart svg .bandlbl { fill: var(--muted); font-size: 9px; }
-.chart svg .grid { stroke: var(--line); stroke-width: 1; }
-.chart svg .ytick { fill: var(--muted); font-size: 9.5px; text-anchor: end; }
-.chart svg .xtick { fill: var(--muted); font-size: 9.5px; text-anchor: middle; }
-.chart svg .xunit { fill: var(--muted); font-size: 9px; }
-.chart svg .ser { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-.chart svg .ser.dash { stroke-dasharray: 5 4; stroke-width: 1.6; }
-.chart svg .limit { stroke: var(--text); stroke-width: 1.2; stroke-dasharray: 3 3; opacity: .7; }
-.chart svg .limlbl { fill: var(--text); font-size: 9.5px; font-weight: 600; }
-.chart svg .mkr { fill: var(--panel); stroke: var(--text); stroke-width: 1.6; }
-.chart svg .mkr.bad { stroke: var(--red); }
-.chart svg .failpt { fill: var(--red); stroke: var(--panel); stroke-width: 2; }
-.chart svg .faillbl { fill: var(--text); font-size: 10px; font-weight: 800; }
-.chart svg .gap { fill: none; stroke: var(--red); stroke-width: 1.5; stroke-dasharray: 3 2; }
-.chart svg .need { stroke: var(--text); stroke-width: 1.5; }
-.chart svg .xhair { stroke: var(--muted); stroke-width: 1; }
+.c-cap { color: var(--muted); font-size: .85rem; margin: 2px 0 0; }
+.chart svg .band { fill: rgba(255, 255, 255, .045); }
+.chart svg .danger { fill: rgba(255, 77, 94, .14); }
+.chart svg .phase { fill: var(--muted); font-size: 11.5px; }
+.chart svg .axis { stroke: var(--muted); stroke-width: 1.2; }
+.chart svg .ytick { fill: var(--muted); font-size: 12px; text-anchor: end; }
+.chart svg .yunit { fill: var(--muted); font-size: 11px; text-anchor: end; }
+.chart svg .xtick { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.chart svg .ser { fill: none; stroke-width: 3.5; stroke-linejoin: round; stroke-linecap: round; }
+.chart svg .ser.dash { stroke-dasharray: 6 5; stroke-width: 2.5; }
+.chart svg .ser.need { stroke-width: 3; }
+.chart svg .ser.dash[style*="c0802a"] { stroke-width: 1.8; opacity: .7; }
+.chart svg .limit { stroke: var(--orange); stroke-width: 2.5; }
+.chart svg .limlbl { fill: var(--text); font-size: 12.5px; font-weight: 700; }
+.chart svg .needline { stroke: var(--orange); stroke-width: 3; }
+.chart svg .failpt { fill: var(--red); stroke: var(--text); stroke-width: 2; }
+.chart svg .faillbl { fill: var(--text); font-size: 13px; font-weight: 800; }
+.chart svg .xhair { stroke: var(--text); stroke-width: 1; opacity: .6; }
 .chart svg .hit { fill: transparent; cursor: crosshair; }
-.tip { position: absolute; top: 4px; background: rgba(11, 16, 32, .95); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: .75rem; pointer-events: none; white-space: nowrap; z-index: 2; }
+.tip { position: absolute; top: 4px; background: rgba(11, 16, 32, .95); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: .85rem; pointer-events: none; white-space: nowrap; z-index: 2; }
 .tip-t { color: var(--muted); margin-bottom: 2px; }
 @media (min-width: 640px) {
   .health { top: 70px; }
   .chart-grid { grid-template-columns: 1fr 1fr; }
-  .anomaly .chart-grid, .chart.big { grid-column: 1 / -1; }
 }

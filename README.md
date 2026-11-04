@@ -5,12 +5,17 @@ space mission, launch it, and usually fail the first time. The anomaly report tr
 failure back through the coupling chain to the team's own choices. Round 2 is a 3-5 minute
 redesign.
 
-Flow: destination, then one screen per design choice (science, power, thermal, antenna,
-route, engine, tank, launcher), then review and launch. Each choice screen first explains the
-design consideration for the chosen destination (e.g. "Power at Pluto"), then shows the options.
+Built to go with a talk on **coupling** in spacecraft mission design: every choice feeds several
+budgets, and a failure is rarely where its cause is.
+
+Flow: destination, then one screen per design choice (mission type, power, thermal, antenna,
+route, engine, tank, rocket), then review and launch. Each choice screen has a two-line intro for
+the chosen destination (e.g. "Power at Pluto") and a "Ripples into" row naming the budgets that
+choice feeds. Mission type is Survey, Spectrometry, or Imaging + radar.
 
 - **Attempt 1:** no budgets and no Back button. The team commits, launches, and (usually) fails.
-  The anomaly report shows the graph of the budget that broke.
+  The anomaly report shows the graph of the budget that broke, plus a coupling map: every choice
+  that feeds the failed budget lights up red.
 - **Attempt 2+:** Back is allowed, and budgets appear as graphs over mission time: power
   available vs needed, heat vs thermal limit, radiation dose, data sent vs goal, money spent vs
   budget, mass vs launcher, delta-v vs the arrival burn, part life vs mission length (and the
@@ -136,6 +141,7 @@ Before class, on 3-4 phones (or 3-4 browser tabs, at least one on a real phone):
 - `src/data.js`: every tunable number (destinations, parts, launchers, events).
 - `src/model.js`: physics, launch simulation, anomaly chains. No DOM; shared with the balance script.
 - `src/considerations.js`: the per-destination design consideration text for each choice screen.
+- `src/coupling.js`: which choices feed which budgets (chips, ripple, and the coupling map).
 - `src/charts.js`: budget graphs over mission time (data from `model.js`, rendered as SVG).
 - `src/main.js`, `src/style.css`: the screens.
 - `scripts/balance.mjs`: the balance test.

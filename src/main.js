@@ -6,8 +6,9 @@ import {
 } from './model.js';
 import { consideration } from './considerations.js';
 import {
-  buildCharts, renderChart, resetCharts, attachHover, chartForFailure, statusBadge, CHART_ORDER, CHART_LABEL,
+  buildCharts, renderChart, resetCharts, attachHover, chartForFailure, CHART_ORDER, CHART_LABEL,
 } from './charts.js';
+import { COUPLING, BUDGET_LABEL, couplingMap } from './coupling.js';
 
 // ---------- flags + state ----------
 const params = new URLSearchParams(location.search);
@@ -48,6 +49,7 @@ function load() {
 }
 let state = load() || fresh();
 let lastStatus = null; // budget colors before the last pick, to flash what changed
+let ripple = null; // budgets the last pick moved (attempt 2+)
 let anim = null; // running launch animation handle
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* private mode */ } };
 
@@ -78,9 +80,35 @@ function healthRow(ch) {
 function chartsSection(ch, keys, heading) {
   if (!ch) return '';
   const all = [...new Set([...keys, ...state.open])].filter((k) => ch[k]);
-  return `<section class="graphs"><h2>${heading}</h2><p class="note">Estimates before launch. Tap the chips at the top to add other budgets. Touch a graph to read values.</p>
+  return `<section class="graphs"><h2>${heading}</h2><p class="note">Blue is your design. Orange is the limit. Tap a chip above to add a graph.</p>
     <div class="chart-grid">${all.map((k) => renderChart(ch[k])).join('')}</div></section>`;
 }
+
+// ---------- coupling: what a choice feeds, and what the last pick moved ----------
+// Margins past ±100% are "plenty" / "hopeless": clamp so only real shifts show up.
+const clampM = (m) => (typeof m === 'number' ? Math.max(-1, Math.min(1, m)) : m);
+const margins = () => { const ch = charts(); return ch ? Object.fromEntries(Object.entries(ch).map(([k, v]) => [k, clampM(v.margin)])) : null; };
+const fmtM = (m) => (m == null ? '–' : m >= 1 ? '100%+' : m <= -1 ? '−100%' : `${m < 0 ? '−' : ''}${Math.abs(R(m * 100))}%`);
+
+function computeRipple(before, after) {
+  if (!before || !after) return null;
+  return Object.keys(after).filter((k) => typeof before[k] === 'number' && typeof after[k] === 'number' && Math.abs(after[k] - before[k]) >= 0.03)
+    .sort((a, b) => Math.abs(after[b] - before[b]) - Math.abs(after[a] - before[a])).slice(0, 4)
+    .map((k) => ({ k, from: before[k], to: after[k] }));
+}
+
+function rippleHTML() {
+  if (!showBudgets() || !ripple) return '';
+  if (!ripple.length) return '<div class="ripple"><b>That pick barely moved any budget.</b></div>';
+  return `<div class="ripple"><b>That pick moved:</b>${ripple.map((r) => `<span class="rchip ${r.to < 0.15 && r.to < r.from ? 'down' : r.from < 0.15 && r.to >= 0.15 ? 'up' : ''}">${CHART_LABEL[r.k]} <i>${fmtM(r.from)}</i> → <i>${fmtM(r.to)}</i></span>`).join('')}</div>
+    <p class="note">Margin left. Same choice, many budgets.</p>`;
+}
+
+const partName = (c) => {
+  const v = state.design[c]; if (!v) return '';
+  if (c === 'traj') return v === 'assist' ? 'Assist' : 'Direct';
+  return SLOT[c].list.find((p) => p.id === v).name.replace(/\s*\(.*\)/, '');
+};
 
 // ---------- option cards ----------
 function statsFor(slotKey, p) {
@@ -168,15 +196,12 @@ function screenDest() {
         <div><div class="dest-name">${D.name}</div><div class="stars">${'★'.repeat(D.difficulty)}${'☆'.repeat(5 - D.difficulty)}</div></div>
         <span class="mult">×${D.mult} score</span></div>
       <div class="dest-goal">${esc(D.goal)}</div>
-      <div class="kv"><span>Getting there</span><b>${D.dvLabel}</b></div>
-      <div class="kv"><span>Temperature</span><b>${D.thermalLabel}</b></div>
-      <div class="kv"><span>Budget</span><b>$${D.budget}M</b></div>
-      <div class="hazard"><b>⚠ ${esc(D.hazard.name)}:</b> ${esc(D.hazard.text)}</div>
-      <div class="goals"><div><span class="tier min">Minimum</span> ${esc(D.minGoal)}</div><div><span class="tier full">Full</span> ${esc(D.fullGoal)}</div></div>
+      <div class="hazard"><b>⚠ ${esc(D.hazard.name)}</b></div>
+      ${showBudgets() ? `<div class="kv"><span>Budget</span><b>$${D.budget}M</b></div>` : ''}
     </button>`).join('');
   const intro = state.attempt === 1
-    ? '<p class="lead">Whole team decides. Harder targets score more. You will make one choice per screen, and on this first attempt there is no going back. Choose carefully.</p>'
-    : '<p class="lead">Whole team decides. Harder targets score more.</p>';
+    ? '<p class="lead">One choice per screen. No going back. Every choice ripples into the others.</p>'
+    : '<p class="lead">Harder targets score more.</p>';
   return `${header()}<main><h1>Where are we going?</h1>${intro}
     ${state.history.length ? historyHTML() : ''}<div class="dests">${cards}</div>
     <button class="link" data-act="reset">Start over (new team)</button></main>${nav(!!sel)}`;
@@ -191,13 +216,12 @@ function screenChoice(k) {
       <div class="eyebrow"><span class="role">${slot.role}</span></div>
       <h1>${esc(c.title)}</h1>
       <p class="why">${esc(c.why)}</p>
-      <h3>At ${D.name}</h3>
       <ul class="here">${c.here.map((h) => `<li>${esc(h)}</li>`).join('')}</ul>
-      <p class="ask">${esc(c.ask)}</p>
+      <div class="feeds"><span>Ripples into</span>${COUPLING[k].map((b) => `<i>${BUDGET_LABEL[b]}</i>`).join('')}</div>
     </section>
-    <h2 class="pick-h">Pick one</h2>
     ${optionsHTML(slot)}
-    ${ch ? chartsSection(ch, SLOT_CHARTS[k], 'How your design plays out') : ''}
+    ${rippleHTML()}
+    ${ch ? chartsSection(ch, SLOT_CHARTS[k], 'Your budgets') : ''}
   </main>${nav(!!state.design[k])}`;
   lastStatus = ch ? Object.fromEntries(Object.entries(ch).map(([kk, v]) => [kk, v.status])) : null;
   return html;
@@ -213,20 +237,18 @@ function screenReview() {
     return `<div class="kv"><span>${SLOT[k].label}</span><b>${esc(name)}</b></div>`;
   }).join('');
   if (!showBudgets()) {
-    return `${header()}<main><h1>Final design</h1><p class="lead">This is what you're flying to ${b.D.name}. No budgets this time. Launch it and see what happens; the mission report will show you what went wrong.</p>
+    return `${header()}<main><h1>Final design</h1><p class="lead">Flying to ${b.D.name}. Launch it and see what happens.</p>
       <div class="costbox">${picks}</div>
-      <p class="note">Real hardware always comes out a little different than the estimate.</p>
     </main>${nav(true, '🚀 Launch')}`;
   }
   const ch = buildCharts(d, ESTIMATE);
   const keys = CHART_ORDER.filter((k) => ch[k]);
   const reds = keys.filter((k) => ch[k].status === 'red').length; const yellows = keys.filter((k) => ch[k].status === 'yellow').length;
   const over = b.cost > b.budget;
-  return `${header()}<main><h1>Design review</h1><p class="lead">Systems walks the team through every budget. Green has at least 15% margin, yellow is thin, red is broken.</p>
-    <div class="summary">${reds ? `<b class="red-t">${reds} red</b> · ` : ''}${yellows ? `<b class="yellow-t">${yellows} yellow</b> · ` : ''}Mission ${fmtYr(b.years)} · ${esc(b.tr.label)}</div>
+  return `${header()}<main><h1>Design review</h1>
+    <div class="summary">${reds ? `<b class="red-t">${reds} failing</b> · ` : ''}${yellows ? `<b class="yellow-t">${yellows} thin</b> · ` : ''}${!reds && !yellows ? '<b class="green-t">All clear</b> · ' : ''}Real hardware comes out heavier. Leave margin.</div>
     <div class="chart-grid">${keys.map((k) => renderChart(ch[k])).join('')}</div>
     <details class="picks"><summary>Your parts</summary><div class="costbox">${picks}</div></details>
-    <p class="note">Real hardware always comes out a little different than the estimate. Margins matter.</p>
     ${over ? `<div class="warn">Launch blocked: over budget by $${R(b.cost - b.budget)}M.</div>` : ''}
   </main>${nav(!over, '🚀 Launch')}`;
 }
@@ -338,7 +360,8 @@ function showResult(res) {
   // The graph of the budget that broke, flown with the real launch conditions.
   const ch = buildCharts(d, res.opts, f);
   const fk = chartForFailure(f, res.b);
-  const failChart = ch && fk && ch[fk] ? `<p class="a-sub">What the ${ch[fk].title.toLowerCase()} budget looked like:</p>${renderChart(ch[fk], { big: true })}` : '';
+  const failChart = ch && fk && ch[fk] ? renderChart(ch[fk]) : '';
+  const map = f ? `<p class="a-sub">The failure traces back to these choices:</p>${couplingMap(d, partName, fk)}` : '';
   document.getElementById('result').innerHTML = `
     <div class="outcome ${res.outcome}">
       <div class="o-tier">${tierName(res.outcome)}</div>
@@ -352,11 +375,13 @@ function showResult(res) {
     </div>
     ${f ? `<section class="anomaly"><h2>Anomaly report</h2><p class="a-what">${esc(f.text)}</p>
       ${failChart}
-      <p class="a-sub">Root cause, traced back to your choices:</p>
-      ${chains.map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('')}
+      ${map}
+      <p class="a-sub">The chain of cause and effect:</p>
+      ${chains.slice(0, 1).map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('')}
+      ${chains.length > 1 ? `<details class="picks"><summary>More causes</summary>${chains.slice(1).map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('')}</details>` : ''}
       </section>` : `<section class="anomaly good"><h2>Mission report</h2><p>Every constraint held. ${closest ? `Closest call: <b>${closest}</b>.` : ''}</p></section>`}
-    ${ev ? `<p class="note">Random event this launch: ${esc(ev.text)}</p>` : ''}
-    ${first ? `<div class="unlock"><b>Budgets unlocked.</b> For your redesign, every choice screen shows graphs of power, heat, radiation, data, cost, mass, fuel, and part life over the whole mission, and you can go back and change your mind.</div>` : ''}
+    ${ev ? `<p class="note">Random event: ${esc(ev.text)}</p>` : ''}
+    ${first ? `<div class="unlock"><b>Budgets unlocked.</b> Graphs on every screen. Back works now.</div>` : ''}
     ${historyHTML()}
     <div class="end-actions">
       <button class="btn primary" data-act="redesign">Redesign · Attempt ${state.attempt + 1}</button>
@@ -385,7 +410,7 @@ function render() {
   if (k === 'launch') startLaunch();
 }
 
-function go(n) { state.step = n; lastStatus = null; save(); render(); window.scrollTo(0, 0); }
+function go(n) { state.step = n; lastStatus = null; ripple = null; save(); render(); window.scrollTo(0, 0); }
 const stepOf = (k) => FLOW.indexOf(k);
 
 function autoPick(mode) {
@@ -406,7 +431,9 @@ $app.addEventListener('click', (e) => {
   if (act === 'dest') {
     state.design.dest = el.dataset.id; save(); render();
   } else if (act === 'pick') {
+    const before = showBudgets() ? margins() : null;
     state.design[el.dataset.slot] = el.dataset.id;
+    ripple = computeRipple(before, showBudgets() ? margins() : null);
     save(); keepScroll();
   } else if (act === 'chart') {
     const k = el.dataset.k;
@@ -428,4 +455,4 @@ $app.addEventListener('click', (e) => {
 render();
 
 // Expose for quick console checks.
-if (DEBUG) window.__md = { state: () => state, budgets, simulate, allDesigns, buildCharts, LAUNCHERS, statusBadge };
+if (DEBUG) window.__md = { state: () => state, budgets, simulate, allDesigns, buildCharts, LAUNCHERS };

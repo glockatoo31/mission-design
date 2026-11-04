@@ -120,9 +120,9 @@ export const DESTINATIONS = [
 // Every part has: id, name, role, blurb, mass, cost, life (design life, years).
 
 export const PAYLOADS = [
-  { id: 'cam', name: 'Survey camera', blurb: 'Small, cheap, low data.', mass: 20, cost: 25, powerW: 25, genGb: 80, life: 15 },
-  { id: 'spec', name: 'Spectrometer suite', blurb: 'Solid science, medium size.', mass: 55, cost: 60, powerW: 60, genGb: 400, life: 11 },
-  { id: 'hires', name: 'Hi-res imager + radar', blurb: 'Huge data. Heavy and hungry.', mass: 140, cost: 110, powerW: 150, genGb: 3000, life: 10 },
+  { id: 'cam', name: 'Survey', blurb: 'Survey camera. Wide views, low data.', mass: 20, cost: 25, powerW: 25, genGb: 80, life: 15 },
+  { id: 'spec', name: 'Spectrometry', blurb: 'Spectrometer suite. What it is made of.', mass: 55, cost: 60, powerW: 60, genGb: 400, life: 11 },
+  { id: 'hires', name: 'Imaging + radar', blurb: 'Hi-res imager and radar. Huge data, heavy, hungry.', mass: 140, cost: 110, powerW: 150, genGb: 3000, life: 10 },
 ];
 
 export const POWER = [
@@ -179,7 +179,7 @@ export const RANDOM_EVENTS = [
 
 // The part slots in build order, with the role that owns each one.
 export const SLOTS = [
-  { key: 'payload', label: 'Science payload', role: 'Science', list: PAYLOADS, screen: 2 },
+  { key: 'payload', label: 'Mission', role: 'Science', list: PAYLOADS, screen: 2 },
   { key: 'power', label: 'Power system', role: 'Power & Thermal', list: POWER, screen: 3 },
   { key: 'thermal', label: 'Thermal / protection', role: 'Power & Thermal', list: THERMAL, screen: 3 },
   { key: 'comms', label: 'Antenna', role: 'Comms & Data', list: COMMS, screen: 3 },

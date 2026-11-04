@@ -8,6 +8,7 @@ import {
   budgets, marginColor, heatAt, doseAt, powerAt, needAt, ESTIMATE, fmtYr, fmtGb, STORM_YEARS,
 } from './model.js';
 import { BUDGET_LABEL } from './coupling.js';
+import { STATUS_ICON } from './icons.js';
 
 // Two series hues, validated (dataviz validate_palette.js, dark, surface #141b33).
 const BLUE = '#3f8fe6';
@@ -42,7 +43,7 @@ const when = (t) => (t < 0.1 ? 'on arrival' : `in year ${fmtYr(t, true)}`);
 // status + margin + one-line verdict from the same number
 function judge(margin, text, fail) {
   const status = marginColor(margin);
-  const verdict = status === 'red' ? `✗ ${text.bad(fail)}` : status === 'yellow' ? `! ${text.thin}` : `✓ ${text.ok}`;
+  const verdict = status === 'red' ? text.bad(fail) : status === 'yellow' ? text.thin : text.ok;
   return { status, margin, verdict };
 }
 
@@ -215,8 +216,8 @@ export function renderChart(spec) {
     ? `<div class="legend">${shown.map((s) => `<span><i class="${s.dash ? 'dash' : ''}" style="--c:${s.color}"></i>${s.name}</span>`).join('')}</div>` : '';
   return `<figure class="chart st-${spec.status}">
     <div class="c-title">${spec.title}</div>
-    <div class="verdict ${spec.status}">${spec.verdict}</div>
-    ${legend}${body}${spec.note ? `<p class="c-cap">${spec.note}</p>` : ''}</figure>`;
+    <div class="verdict ${spec.status}">${STATUS_ICON[spec.status] || STATUS_ICON.green}<span>${spec.verdict}</span></div>
+    ${legend}${body}${spec.note ? `<p class="c-cap">${spec.note.replace(/\.$/, '')}</p>` : ''}</figure>`;
 }
 
 const W = 340; const H = 210; const L = 46; const RM = 14; const T = 14; const B = 44;

@@ -51,7 +51,7 @@ export function couplingMap(d, partName, failKey) {
   BUDGETS.forEach((b, j) => {
     const hot = fail === b;
     g.push(`<rect x="${rx}" y="${top + j * rowH + 1}" width="${rw}" height="28" rx="7" class="bn ${hot ? 'hot' : ''}"/>`);
-    g.push(`<text x="${rx + rw / 2}" y="${top + j * rowH + 20}" class="bn-t ${hot ? 'hot' : ''}" text-anchor="middle">${hot ? '✗ ' : ''}${BUDGET_LABEL[b]}</text>`);
+    g.push(`<text x="${rx + rw / 2}" y="${top + j * rowH + 20}" class="bn-t ${hot ? 'hot' : ''}" text-anchor="middle">${BUDGET_LABEL[b]}</text>`);
   });
   return `<svg viewBox="0 0 ${W} ${H}" class="cmap" role="img" aria-label="Which choices feed which budgets">${g.join('')}</svg>`;
 }

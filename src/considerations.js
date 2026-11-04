@@ -10,7 +10,7 @@ const energy = (c3) => (c3 > 30 ? 'high' : c3 > 10 ? 'medium' : 'low');
 export function consideration(slot, D, d) {
   const f = BUILDERS[slot];
   const c = f(D, d, d.traj ? D.traj[d.traj] : null);
-  c.here = c.here.filter(Boolean);
+  c.here = c.here.filter(Boolean).map((h) => h.replace(/\.$/, ''));
   return c;
 }
 

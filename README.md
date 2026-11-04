@@ -23,6 +23,7 @@ choice feeds. Mission type is Survey, Spectrometry, or Imaging + radar.
   status; tap one to add its graph.
 
 Static, client-only (Vite + vanilla JS). No backend, no accounts, no network calls after load.
+Geist and Geist Mono are bundled from npm (`@fontsource-variable`), so fonts work offline.
 
 ## Run locally
 
@@ -141,6 +142,7 @@ Before class, on 3-4 phones (or 3-4 browser tabs, at least one on a real phone):
 - `src/data.js`: every tunable number (destinations, parts, launchers, events).
 - `src/model.js`: physics, launch simulation, anomaly chains. No DOM; shared with the balance script.
 - `src/considerations.js`: the per-destination design consideration text for each choice screen.
+- `src/icons.js`: the one icon set (lucide paths) and the flat logo mark.
 - `src/coupling.js`: which choices feed which budgets (chips, ripple, and the coupling map).
 - `src/charts.js`: budget graphs over mission time (data from `model.js`, rendered as SVG).
 - `src/main.js`, `src/style.css`: the screens.

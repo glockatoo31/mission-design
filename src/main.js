@@ -1,3 +1,5 @@
+import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-mono';
 import './style.css';
 import { DESTINATIONS, SLOTS, FLYBYS, LAUNCHERS } from './data.js';
 import {
@@ -9,6 +11,7 @@ import {
   buildCharts, renderChart, resetCharts, attachHover, chartForFailure, CHART_ORDER, CHART_LABEL,
 } from './charts.js';
 import { COUPLING, BUDGET_LABEL, couplingMap } from './coupling.js';
+import { ICON, MARK } from './icons.js';
 
 // ---------- flags + state ----------
 const params = new URLSearchParams(location.search);
@@ -48,7 +51,7 @@ function load() {
   } catch { return null; }
 }
 let state = load() || fresh();
-let lastStatus = null; // budget colors before the last pick, to flash what changed
+let lastStatus = null; // budget colors before the last pick
 let ripple = null; // budgets the last pick moved (attempt 2+)
 let anim = null; // running launch animation handle
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* private mode */ } };
@@ -73,7 +76,7 @@ function healthRow(ch) {
   return `<div class="health">${keys.map((k) => {
     const s = ch[k].status;
     const changed = lastStatus && lastStatus[k] && lastStatus[k] !== s;
-    return `<button class="hchip ${s} ${changed ? 'flash' : ''} ${state.open.includes(k) ? 'open' : ''}" data-act="chart" data-k="${k}">${CHART_LABEL[k]}<i>${{ green: '✓', yellow: '!', red: '✗' }[s] || ''}</i></button>`;
+    return `<button class="hchip ${s} ${state.open.includes(k) ? 'open' : ''}" data-act="chart" data-k="${k}"><i class="dot"></i>${CHART_LABEL[k]}</button>`;
   }).join('')}</div>`;
 }
 
@@ -145,7 +148,7 @@ function statsFor(slotKey, p) {
       add('yr cruise', fmtYr(tr.cruise, true)); add('m/s burn', tr.dv);
       add('launch energy', tr.c3 > 30 ? 'High' : tr.c3 > 10 ? 'Med' : 'Low');
       add('ops cost', `$${R(D.opsCostPerYr * (tr.cruise + D.opsYears))}M`);
-      if (tr.flyby) add('', `${FLYBYS[tr.flyby].name} ⚠`);
+      if (tr.flyby) add('', FLYBYS[tr.flyby].name);
       break;
     }
     default: break;
@@ -168,9 +171,9 @@ function optionsHTML(slot) {
 function header() {
   const n = state.step;
   return `<header class="top">
-    <div class="brand">Mission Design${DEBUG ? ' <span class="dbg">DEBUG</span>' : ''}</div>
-    <div class="meta"><span>Step ${n + 1}/${FLOW.length} · ${stepName(key())}</span><span class="attempt">Attempt ${state.attempt}</span></div>
-    <div class="dots">${FLOW.map((_, i) => `<i class="${i <= n ? 'on' : ''}"></i>`).join('')}</div>
+    <div class="top-row"><div class="brand">${MARK}Mission Design${DEBUG ? ' <span class="dbg">debug</span>' : ''}</div><span class="attempt">Attempt ${state.attempt}</span></div>
+    <div class="countdown"><b>${n === FLOW.length - 1 ? 'T+0' : `T−${FLOW.length - 1 - n}`}</b> · ${stepName(key())}</div>
+    <i class="prog" style="width:${(100 * n) / (FLOW.length - 1)}%"></i>
   </header>`;
 }
 
@@ -193,15 +196,15 @@ function screenDest() {
   const cards = DESTINATIONS.map((D) => `
     <button class="dest ${sel === D.id ? 'sel' : ''}" data-act="dest" data-id="${D.id}">
       <div class="dest-top"><span class="planet" style="--c:${D.color}"></span>
-        <div><div class="dest-name">${D.name}</div><div class="stars">${'★'.repeat(D.difficulty)}${'☆'.repeat(5 - D.difficulty)}</div></div>
+        <div><div class="dest-name">${D.name}</div><div class="diff" role="img" aria-label="Difficulty ${D.difficulty} of 5">${[1, 2, 3, 4, 5].map((i) => `<i class="${i <= D.difficulty ? 'on' : ''}"></i>`).join('')}</div></div>
         <span class="mult">×${D.mult} score</span></div>
       <div class="dest-goal">${esc(D.goal)}</div>
-      <div class="hazard"><b>⚠ ${esc(D.hazard.name)}</b></div>
+      <div class="hazard">${ICON.alert}<span>${esc(D.hazard.name)}</span></div>
       ${showBudgets() ? `<div class="kv"><span>Budget</span><b>$${D.budget}M</b></div>` : ''}
     </button>`).join('');
   const intro = state.attempt === 1
     ? '<p class="lead">One choice per screen. No going back. Every choice ripples into the others.</p>'
-    : '<p class="lead">Harder targets score more.</p>';
+    : '<p class="lead">Harder targets score more</p>';
   return `${header()}<main><h1>Where are we going?</h1>${intro}
     ${state.history.length ? historyHTML() : ''}<div class="dests">${cards}</div>
     <button class="link" data-act="reset">Start over (new team)</button></main>${nav(!!sel)}`;
@@ -239,7 +242,7 @@ function screenReview() {
   if (!showBudgets()) {
     return `${header()}<main><h1>Final design</h1><p class="lead">Flying to ${b.D.name}. Launch it and see what happens.</p>
       <div class="costbox">${picks}</div>
-    </main>${nav(true, '🚀 Launch')}`;
+    </main>${nav(true, 'Launch')}`;
   }
   const ch = buildCharts(d, ESTIMATE);
   const keys = CHART_ORDER.filter((k) => ch[k]);
@@ -250,7 +253,7 @@ function screenReview() {
     <div class="chart-grid">${keys.map((k) => renderChart(ch[k])).join('')}</div>
     <details class="picks"><summary>Your parts</summary><div class="costbox">${picks}</div></details>
     ${over ? `<div class="warn">Launch blocked: over budget by $${R(b.cost - b.budget)}M.</div>` : ''}
-  </main>${nav(!over, '🚀 Launch')}`;
+  </main>${nav(!over, 'Launch')}`;
 }
 
 function historyHTML() {
@@ -333,7 +336,7 @@ function startLaunch() {
     for (let i = 0; i < 4; i++) document.getElementById(`ph${i}`).className = i < ph ? 'done' : i === ph ? 'now' : '';
     while (next < beats.length && beats[next].ms <= ms) {
       const bt = beats[next++];
-      log.insertAdjacentHTML('afterbegin', `<li class="${bt.cls}"><span>${bt.cls === 'ok' ? '✓' : bt.cls === 'fail' ? '✗' : bt.cls === 'warn' ? '!' : 'i'}</span>${esc(bt.text)}</li>`);
+      log.insertAdjacentHTML('afterbegin', `<li class="${bt.cls}">${bt.cls === 'ok' ? ICON.check : bt.cls === 'fail' ? ICON.x : bt.cls === 'warn' ? ICON.alert : ICON.info}<span>${esc(bt.text)}</span></li>`);
       if (bt.fail) { const fm = document.getElementById('failmk'); if (fm) fm.style.display = 'block'; document.querySelector('.launch').classList.add('shake'); }
     }
     // Timers (not requestAnimationFrame) so the launch keeps going if the phone is backgrounded.

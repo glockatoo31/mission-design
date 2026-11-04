@@ -2,29 +2,81 @@
 // Shared by the browser app and scripts/balance.mjs.
 import {
   G0, STRUCTURE_FRACTION, MASS_GROWTH_MAX, BUS, RTG_HEATER_CREDIT_W, RTG_HOT_FLUX,
-  MARGIN_GREEN, MIN_OPS_YEARS, FLYBYS, DESTINATIONS, PAYLOADS, POWER, THERMAL, COMMS,
-  ENGINES, TANKS, LAUNCHERS, TRAJECTORIES, RANDOM_EVENTS, SLOTS,
+  MARGIN_GREEN, MIN_OPS_YEARS, FLYBYS, DESTINATIONS, CONTRACTS, PAYLOADS, ENGINES,
+  LAUNCHERS, TRAJECTORIES, RANDOM_EVENTS, PARAMS, SOLAR, RTG, BATTERY, THERMAL, COMMS, TANK,
 } from './data.js';
 
 const byId = (list, id) => list.find((x) => x.id === id) || null;
 const CRUISE_ARRAY_DEG = 0.02;
+const R = Math.round;
+const n1 = (x) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
+
+export const paramVal = (d, k) => (typeof d[k] === 'number' ? d[k] : PARAMS[k].def);
+
+// ---------- procedural parts: sliders in, mass / cost / performance out ----------
+function powerPart(d, D) {
+  const A = paramVal(d, 'solarArea'); const n = paramVal(d, 'rtgUnits');
+  const kWh = D && D.nightHours ? paramVal(d, 'battery') : BATTERY.defaultKWh;
+  const hasSolar = A > 0; const hasRtg = n > 0;
+  const mass = (hasSolar ? SOLAR.massBase + SOLAR.massPerM2 * A : 0) + n * RTG.mass + BATTERY.massBase + BATTERY.massPerKWh * kWh;
+  const cost = (hasSolar ? SOLAR.costBase + SOLAR.costPerM2 * A : 0) + n * RTG.cost + BATTERY.costBase + BATTERY.costPerKWh * kWh;
+  const life = Math.min(hasSolar ? SOLAR.life : Infinity, hasRtg ? RTG.life : Infinity);
+  const rtgName = `${n} RTG${n > 1 ? 's' : ''}`;
+  return {
+    name: hasSolar && hasRtg ? `${n1(A)} m² arrays + ${rtgName}` : hasRtg ? rtgName : `${n1(A)} m² solar arrays`,
+    short: hasSolar && hasRtg ? `${n1(A)} m² + ${n} RTG` : hasRtg ? rtgName : `${n1(A)} m² solar`,
+    type: hasSolar && hasRtg ? 'hybrid' : hasRtg ? 'rtg' : 'solar',
+    hasSolar, hasRtg, solarW: A * SOLAR.wPerM2, rtgUnits: n, rtgW: n * RTG.unitW, decay: RTG.decay,
+    batteryWh: kWh * 1000, mass, cost, life: Number.isFinite(life) ? life : 0,
+  };
+}
+
+function thermalPart(d) {
+  const R_ = paramVal(d, 'radiator'); const S = paramVal(d, 'shield');
+  return {
+    name: `${n1(R_)} m² radiators, ${n1(S)} cm shielding`, short: `${n1(R_)} m² rad · ${n1(S)} cm`,
+    hotLimit: THERMAL.hotBase + THERMAL.hotPerRad * R_,
+    heaterFactor: Math.max(THERMAL.heaterMin, THERMAL.heaterBase - THERMAL.heaterPerShield * S - THERMAL.heaterPerRad * R_),
+    radTol: THERMAL.radTolBase + THERMAL.radTolPerShield * S,
+    mass: THERMAL.massBase + THERMAL.massPerRad * R_ + THERMAL.massPerShield * S,
+    cost: THERMAL.costBase + THERMAL.costPerRad * R_ + THERMAL.costPerShield * S,
+    life: THERMAL.life - THERMAL.lifePerRad * R_,
+  };
+}
+
+function commsPart(d) {
+  const dish = paramVal(d, 'dish'); const tx = paramVal(d, 'txPower');
+  return {
+    name: `${n1(dish)} m dish, ${tx} W`, short: `${n1(dish)} m · ${tx} W`,
+    rateGb: COMMS.rateK * dish * dish * tx, powerW: tx,
+    mass: COMMS.massBase + COMMS.massPerD2 * dish * dish, cost: COMMS.costBase + COMMS.costPerD2 * dish * dish,
+    life: COMMS.lifeBase - COMMS.lifePerD * dish,
+  };
+}
+
+function tankPart(d) {
+  const prop = paramVal(d, 'fuel');
+  return { name: `${R(prop)} kg of fuel`, short: `${R(prop)} kg`, prop, mass: TANK.massBase + TANK.massPerKg * prop, cost: TANK.costBase + TANK.costPerKg * prop, life: TANK.life };
+}
 
 export function parts(d) {
+  const C = byId(CONTRACTS, d.contract);
+  const D = C ? byId(DESTINATIONS, C.dest) : null;
   return {
-    D: byId(DESTINATIONS, d.dest),
-    payload: byId(PAYLOADS, d.payload),
-    power: byId(POWER, d.power),
-    thermal: byId(THERMAL, d.thermal),
-    comms: byId(COMMS, d.comms),
+    C, D,
+    payload: C ? byId(PAYLOADS, C.payload) : null,
+    power: powerPart(d, D),
+    thermal: thermalPart(d),
+    comms: commsPart(d),
     engine: byId(ENGINES, d.engine),
-    tank: byId(TANKS, d.tank),
+    tank: tankPart(d),
     launcher: byId(LAUNCHERS, d.launcher),
     traj: byId(TRAJECTORIES, d.traj),
   };
 }
 
 export function isComplete(d) {
-  return SLOTS.every((s) => d[s.key]) && !!d.dest;
+  return !!(d.contract && d.engine && d.traj && d.launcher && (paramVal(d, 'solarArea') > 0 || paramVal(d, 'rtgUnits') > 0));
 }
 
 // ---------- seeded randomness ----------
@@ -54,23 +106,27 @@ export const ESTIMATE = { growth: 0, event: null, eventFrac: 0.5 };
 const solarFactor = (D) => Math.min(1 / (D.sunAU * D.sunAU), D.solarCap);
 
 function heaterW(D, P, coldW) {
-  if (!P.thermal) return 0;
-  const credit = P.power && P.power.type === 'rtg' ? RTG_HEATER_CREDIT_W : 0;
+  const credit = P.power.rtgUnits * RTG_HEATER_CREDIT_W;
   return Math.max(0, coldW * P.thermal.heaterFactor - credit);
 }
 
-// Power available t years after launch (cruise years at mild degradation, ops at destination rate).
-function supplyAt(t, P, cruise, opts, flybyHit = 0) {
+// Power from each source t years after launch. Cruise years degrade arrays a little;
+// operations degrade them at the destination's rate. solarScale dims the arrays (dust storm).
+function supplyParts(t, P, cruise, opts, flybyHit = 0, solarScale = 1) {
   const pw = P.power; const D = P.D;
-  if (!pw) return 0;
   const f = (opts.event && opts.event.powerFactor) || 1;
-  if (pw.type === 'rtg') return pw.outW * Math.pow(1 - pw.decay, t) * f;
   const tc = Math.min(t, cruise); const to = Math.max(0, t - cruise);
-  return pw.outW * solarFactor(D) * Math.pow(1 - CRUISE_ARRAY_DEG, tc) * Math.pow(1 - D.solarDeg, to) * (1 - flybyHit) * f;
+  const solar = pw.hasSolar
+    ? pw.solarW * solarFactor(D) * Math.pow(1 - CRUISE_ARRAY_DEG, tc) * Math.pow(1 - D.solarDeg, to) * (1 - flybyHit) * solarScale * f : 0;
+  const rtg = pw.hasRtg ? pw.rtgW * Math.pow(1 - pw.decay, t) * f : 0;
+  return { solar, rtg };
+}
+function supplyAt(t, P, cruise, opts, flybyHit = 0) {
+  const s = supplyParts(t, P, cruise, opts, flybyHit);
+  return s.solar + s.rtg;
 }
 
 // ---------- time profiles (shared by simulate and the budget graphs) ----------
-// All take the result of budgets() so they see the same parts and launch conditions.
 const FLYBY_WIDTH = 0.03; // years the Venus flyby heat spike lasts (graph + check)
 export const STORM_YEARS = 0.1; // how long the Mars dust storm lasts
 
@@ -79,7 +135,7 @@ export const STORM_YEARS = 0.1; // how long the Mars dust storm lasts
 // cruise sunshade (about Earth level) until arrival. Plus the Venus flyby spike.
 export function heatAt(t, b) {
   const { P, D, tr } = b;
-  const rtg = P.power && P.power.type === 'rtg' ? RTG_HOT_FLUX : 0;
+  const rtg = P.power.rtgUnits * RTG_HOT_FLUX;
   let f = t >= tr.cruise ? D.hotFlux : Math.min(1, Math.pow(D.hotFlux, t / tr.cruise));
   if (tr.flyby === 'venus' && Math.abs(t - tr.flybyYear) <= FLYBY_WIDTH) f = Math.max(f, FLYBYS.venus.flux);
   return f + rtg;
@@ -98,14 +154,15 @@ export function doseAt(t, b) {
 // eases from Earth's sunlight to the destination's. Matches supplyAt() from arrival on.
 export function powerAt(t, b) {
   const { P, D, tr } = b; const pw = P.power; const opts = b.opts;
-  if (!pw) return 0;
   const f = (opts.event && opts.event.powerFactor) || 1;
-  if (pw.type === 'rtg') return pw.outW * Math.pow(1 - pw.decay, t) * f;
   const hit = tr.flyby && t >= tr.flybyYear ? FLYBYS[tr.flyby].arrayHit : 0;
-  if (t < tr.cruise) return pw.outW * Math.pow(solarFactor(D), t / tr.cruise) * Math.pow(1 - CRUISE_ARRAY_DEG, t) * (1 - hit) * f;
-  let s = supplyAt(t, P, tr.cruise, opts, hit);
-  if (inStorm(t, b)) s *= D.stormFactor;
-  return s;
+  if (t < tr.cruise) {
+    const solar = pw.hasSolar ? pw.solarW * Math.pow(solarFactor(D), t / tr.cruise) * Math.pow(1 - CRUISE_ARRAY_DEG, t) * (1 - hit) * f : 0;
+    const rtg = pw.hasRtg ? pw.rtgW * Math.pow(1 - pw.decay, t) * f : 0;
+    return solar + rtg;
+  }
+  const s = supplyParts(t, P, tr.cruise, opts, hit, inStorm(t, b) ? D.stormFactor : 1);
+  return s.solar + s.rtg;
 }
 
 export function inStorm(t, b) {
@@ -122,12 +179,12 @@ export function launchCapacity(launcher, c3) {
   return launcher.baseKg * Math.exp(-c3 / launcher.falloff);
 }
 
-// ---------- budgets: everything the live strip and review show ----------
+// ---------- budgets: everything the graphs and the review show ----------
 export function budgets(d, opts = ESTIMATE) {
-  const P = parts(d); const D = P.D;
+  const P = parts(d); const D = P.D; const C = P.C;
   const tr = D && d.traj ? D.traj[d.traj] : null;
   const ev = opts.event || {};
-  const r = { P, D, tr, opts };
+  const r = { P, D, C, tr, opts };
 
   // Mass
   const subs = [P.payload, P.power, P.thermal, P.comms, P.engine, P.tank];
@@ -135,18 +192,20 @@ export function budgets(d, opts = ESTIMATE) {
   r.structure = sub * STRUCTURE_FRACTION;
   r.dryEst = sub + r.structure;
   r.dry = r.dryEst * (1 + (opts.growth || 0));
-  r.prop = P.tank ? P.tank.prop : 0;
+  r.prop = P.tank.prop;
   r.wet = r.dry + r.prop;
   r.cap = P.launcher && tr ? launchCapacity(P.launcher, tr.c3) : null;
   r.massMargin = r.cap != null ? (r.cap - r.wet) / r.cap : null;
 
-  // Duration
+  // Duration and deadline
   r.cruise = tr ? tr.cruise : null;
   r.opsYears = D ? D.opsYears : null;
   r.years = tr ? tr.cruise + D.opsYears : null;
+  r.deadline = C ? C.deadline : null;
+  r.timeMargin = tr && C ? (C.deadline - tr.cruise) / C.deadline : null;
 
   // Delta-v
-  if (P.engine && P.tank && tr) {
+  if (P.engine && tr) {
     r.dvAvail = P.engine.isp * (ev.ispFactor || 1) * G0 * Math.log(r.wet / r.dry);
     r.dvPenalty = P.engine.lowThrust ? D.lowThrustPenalty : 1;
     r.dvReq = tr.dv * r.dvPenalty + (ev.extraDv || 0);
@@ -154,9 +213,9 @@ export function budgets(d, opts = ESTIMATE) {
   } else { r.dvAvail = r.dvReq = r.dvMargin = null; }
 
   // Power (worst case: end of mission)
-  if (D && P.power && P.thermal) {
+  if (D) {
     r.heater = heaterW(D, P, D.coldW);
-    r.mainLoad = BUS.powerW + (P.payload ? P.payload.powerW : 0) + (P.comms ? P.comms.powerW : 0);
+    r.mainLoad = BUS.powerW + (P.payload ? P.payload.powerW : 0) + P.comms.powerW;
     r.load = r.mainLoad + r.heater;
     const cruise = tr ? tr.cruise : 0; const yrs = cruise + D.opsYears;
     const hit = tr && tr.flyby ? FLYBYS[tr.flyby].arrayHit : 0;
@@ -170,23 +229,23 @@ export function budgets(d, opts = ESTIMATE) {
   } else { r.powerMargin = null; }
 
   // Data
-  if (D && P.payload && P.comms) {
+  if (D && P.payload) {
     r.genPerYr = P.payload.genGb;
     r.downPerYr = P.comms.rateGb * D.contact / (D.earthAU * D.earthAU) * (ev.dataFactor || 1);
     r.returnable = Math.min(r.genPerYr, r.downPerYr) * D.opsYears;
-    r.dataMargin = (r.returnable - D.fullGb) / D.fullGb;
+    r.goalGb = C.goalGb;
+    r.dataMargin = (r.returnable - C.goalGb) / C.goalGb;
   } else { r.dataMargin = null; }
 
   // Thermal (hot side; cold side shows up as heater power)
-  if (D && P.thermal) {
-    const rtg = P.power && P.power.type === 'rtg' ? RTG_HOT_FLUX : 0;
-    r.hotFlux = D.hotFlux + rtg;
+  if (D) {
+    r.hotFlux = D.hotFlux + P.power.rtgUnits * RTG_HOT_FLUX;
     r.hotLimit = P.thermal.hotLimit;
     r.thermalMargin = (r.hotLimit - r.hotFlux) / r.hotLimit;
   } else { r.thermalMargin = null; }
 
   // Radiation
-  if (D && P.thermal && tr) {
+  if (D && tr) {
     const fb = tr.flyby ? FLYBYS[tr.flyby].dose : 0;
     r.dose = D.cruiseDosePerYr * tr.cruise + D.opsDosePerYr * D.opsYears + fb + (ev.dose || 0);
     r.radTol = P.thermal.radTol;
@@ -199,8 +258,8 @@ export function budgets(d, opts = ESTIMATE) {
   r.launchCost = P.launcher ? P.launcher.cost : 0;
   r.opsCost = D && tr ? D.opsCostPerYr * r.years : 0;
   r.cost = partCost + r.launchCost + r.opsCost;
-  r.budget = D ? D.budget : null;
-  r.costMargin = D ? (D.budget - r.cost) / D.budget : null;
+  r.budget = C ? C.budget : null;
+  r.costMargin = C ? (C.budget - r.cost) / C.budget : null;
 
   // Design life vs mission years
   if (tr) {
@@ -208,16 +267,15 @@ export function budgets(d, opts = ESTIMATE) {
     for (const key of ['payload', 'power', 'thermal', 'comms']) if (P[key]) checks.push({ key, part: P[key], need: r.years });
     if (P.engine) checks.push({ key: 'engine', part: P.engine, need: tr.cruise });
     r.lifeChecks = checks.map((c) => ({ ...c, margin: (c.part.life - c.need) / c.need }));
-    r.weakest = r.lifeChecks.reduce((a, b) => (!a || b.margin < a.margin ? b : a), null);
+    r.weakest = r.lifeChecks.reduce((a, b2) => (!a || b2.margin < a.margin ? b2 : a), null);
     r.lifeMargin = r.weakest ? r.weakest.margin : null;
   } else { r.lifeMargin = null; }
 
   // Flyby hazard
-  if (tr && tr.flyby && P.thermal) {
+  if (tr && tr.flyby) {
     const fb = FLYBYS[tr.flyby];
     if (tr.flyby === 'venus') {
-      const rtg = P.power && P.power.type === 'rtg' ? RTG_HOT_FLUX : 0;
-      r.flybyFlux = fb.flux + rtg;
+      r.flybyFlux = fb.flux + P.power.rtgUnits * RTG_HOT_FLUX;
       r.flybyMargin = (P.thermal.hotLimit - r.flybyFlux) / P.thermal.hotLimit;
     } else {
       r.flybyDose = D.cruiseDosePerYr * tr.flybyYear + fb.dose + (ev.dose || 0);
@@ -227,18 +285,18 @@ export function budgets(d, opts = ESTIMATE) {
 
   // Destination-specific hazard
   r.hazardMargin = null;
-  if (D && P.power && P.thermal) {
+  if (D) {
     if (D.id === 'moon') {
       const night = BUS.survivalW + heaterW(D, P, D.coldW);
-      const rtgW = P.power.type === 'rtg' ? supplyAt(r.years || 1, P, r.cruise || 0, opts) : 0;
+      const rtgW = P.power.hasRtg ? supplyParts(r.years || 1, P, r.cruise || 0, opts).rtg : 0;
       r.nightLoad = night;
       r.nightNeedWh = Math.max(0, night - rtgW) * D.nightHours;
       r.batteryWh = P.power.batteryWh;
       r.hazardMargin = r.nightNeedWh === 0 ? 1 : (r.batteryWh - r.nightNeedWh) / r.nightNeedWh;
     } else if (D.id === 'mars') {
       const cruise = tr ? tr.cruise : 0;
-      const s = supplyAt(cruise + D.stormYear, P, cruise, opts);
-      r.stormSupply = P.power.type === 'solar' ? s * D.stormFactor : s;
+      const s = supplyParts(cruise + D.stormYear, P, cruise, opts, 0, D.stormFactor);
+      r.stormSupply = s.solar + s.rtg;
       r.stormLoad = BUS.survivalW + r.heater;
       r.hazardMargin = (r.stormSupply - r.stormLoad) / r.stormLoad;
     } else if (D.id === 'mercury') r.hazardMargin = r.thermalMargin;
@@ -268,57 +326,61 @@ export function simulate(d, opts = NOMINAL) {
 
   // Review gate
   if (b.cost > b.budget) {
-    return finish(b, opts, [], { t: 0, phase: 'review', mode: 'cost', text: `Program review: over budget by $${Math.round(b.cost - b.budget)}M. Mission cancelled before launch.` });
+    return finish(b, opts, [], { t: 0, phase: 'review', mode: 'cost', text: `Program review: over budget by $${R(b.cost - b.budget)}M. Contract cancelled before launch.` });
   }
 
   // Liftoff
-  if (b.wet > b.cap) fail(0, 'launch', 'launcher', `Launcher overloaded: ${Math.round(b.wet)} kg vs ${Math.round(b.cap)} kg capacity.`);
+  if (b.wet > b.cap) fail(0, 'launch', 'launcher', `Launcher overloaded: ${R(b.wet)} kg vs ${R(b.cap)} kg capacity.`);
+
+  // Contract deadline: the window closes while still in transit.
+  if (cruise > b.deadline) fail(b.deadline, 'cruise', 'deadline', `Contract expired: still ${fmtYr(cruise - b.deadline)} from ${D.name} at the ${fmtYr(b.deadline)} deadline.`);
 
   // Cruise: flyby, random event, design-life expiry, radiation
   if (tr.flyby && tr.flybyYear < cruise) {
     const fb = FLYBYS[tr.flyby];
     events.push({ t: tr.flybyYear, phase: 'cruise', kind: 'flyby', text: fb.name });
     if (tr.flyby === 'venus' && b.flybyMargin < 0) {
-      fail(tr.flybyYear, 'cruise', 'flyby', `Overheated at Venus: ${b.flybyFlux.toFixed(1)}x sunlight vs ${P.thermal.hotLimit}x limit.`);
+      fail(tr.flybyYear, 'cruise', 'flyby', `Overheated at Venus: ${b.flybyFlux.toFixed(1)}x sunlight vs ${n1(P.thermal.hotLimit)}x limit.`);
     }
     if (tr.flyby === 'jupiter' && b.flybyMargin < 0) {
-      fail(tr.flybyYear, 'cruise', 'flyby', `Jupiter flyby radiation: ${Math.round(b.flybyDose)} krad vs ${P.thermal.radTol} krad tolerance.`);
+      fail(tr.flybyYear, 'cruise', 'flyby', `Jupiter flyby radiation: ${R(b.flybyDose)} krad vs ${R(P.thermal.radTol)} krad tolerance.`);
     }
   }
   if (opts.event) events.push({ t: cruise * opts.eventFrac, phase: 'cruise', kind: 'random', text: opts.event.text });
   for (const c of b.lifeChecks) {
     if (c.part.life < c.need) {
       const phase = c.part.life < cruise ? 'cruise' : 'ops';
-      fail(c.part.life, phase, 'life', `${c.part.name} reached its ${c.part.life}-year design life and failed.`, { lifePart: c });
+      fail(c.part.life, phase, 'life', `${c.part.name} reached its ${n1(c.part.life)}-year design life and failed.`, { lifePart: c });
     }
   }
   // Radiation: dose accumulates linearly, plus flyby spike
   const tol = P.thermal.radTol;
   if (doseAt(end, b) > tol && !(tr.flyby === 'jupiter' && b.flybyMargin < 0)) {
     const t = findFirst(0, end, (x) => doseAt(x, b) > tol);
-    fail(t, t < cruise ? 'cruise' : 'ops', 'radiation', `Radiation dose hit ${Math.round(doseAt(end, b))} krad vs ${tol} krad tolerance.`);
+    fail(t, t < cruise ? 'cruise' : 'ops', 'radiation', `Radiation dose hit ${R(doseAt(end, b))} krad vs ${R(tol)} krad tolerance.`);
   }
 
   // Arrival burn
   events.push({ t: cruise, phase: 'arrival', kind: 'arrival', text: 'Arrival burn' });
   if (P.engine.lowThrust && b.ionMargin < 0) {
-    fail(cruise, 'arrival', 'insertion', `Ion engine starved: needs ${Math.round(b.ionLoad)} W, power system gives ${Math.round(b.supplyArrive)} W.`, { ion: true });
+    fail(cruise, 'arrival', 'insertion', `Ion engine starved: needs ${R(b.ionLoad)} W, power system gives ${R(b.supplyArrive)} W.`, { ion: true });
   }
   if (b.dvAvail < b.dvReq) {
-    fail(cruise, 'arrival', 'insertion', `Missed orbit insertion: short by ${Math.round(b.dvReq - b.dvAvail)} m/s.`);
+    fail(cruise, 'arrival', 'insertion', `Missed orbit insertion: short by ${R(b.dvReq - b.dvAvail)} m/s.`);
   }
 
   // Operations
-  if (b.hotFlux > b.hotLimit) fail(cruise + 0.01, 'ops', 'overheat', `Overheated: ${b.hotFlux.toFixed(1)}x sunlight vs ${b.hotLimit}x limit.`);
-  const mainShort = (t) => supplyAt(t, P, cruise, opts, tr.flyby ? FLYBYS[tr.flyby].arrayHit : 0) < b.mainLoad;
-  const allShort = (t) => supplyAt(t, P, cruise, opts, tr.flyby ? FLYBYS[tr.flyby].arrayHit : 0) < b.load;
+  if (b.hotFlux > b.hotLimit) fail(cruise + 0.01, 'ops', 'overheat', `Overheated: ${b.hotFlux.toFixed(1)}x sunlight vs ${n1(b.hotLimit)}x limit.`);
+  const hit = tr.flyby ? FLYBYS[tr.flyby].arrayHit : 0;
+  const mainShort = (t) => supplyAt(t, P, cruise, opts, hit) < b.mainLoad;
+  const allShort = (t) => supplyAt(t, P, cruise, opts, hit) < b.load;
   if (mainShort(end)) {
     const t = findFirst(cruise, end, mainShort);
-    const s = supplyAt(t, P, cruise, opts, tr.flyby ? FLYBYS[tr.flyby].arrayHit : 0);
-    fail(t, 'ops', 'brownout', `Brownout: load ${Math.round(b.mainLoad)} W, power ${Math.round(s)} W.`, { supply: s });
+    const s = supplyAt(t, P, cruise, opts, hit);
+    fail(t, 'ops', 'brownout', `Brownout: load ${R(b.mainLoad)} W, power ${R(s)} W.`, { supply: s });
   } else if (allShort(end)) {
     const t = findFirst(cruise, end, allShort);
-    fail(t, 'ops', 'freeze', `Froze: no power left for ${Math.round(b.heater)} W of heaters.`, { supply: supplyAt(t, P, cruise, opts, tr.flyby ? FLYBYS[tr.flyby].arrayHit : 0) });
+    fail(t, 'ops', 'freeze', `Froze: no power left for ${R(b.heater)} W of heaters.`, { supply: supplyAt(t, P, cruise, opts, hit) });
   }
   if (D.id === 'moon') {
     events.push({ t: cruise + 0.04, phase: 'ops', kind: 'hazard', text: 'Lunar night' });
@@ -326,7 +388,7 @@ export function simulate(d, opts = NOMINAL) {
   }
   if (D.id === 'mars') {
     events.push({ t: cruise + D.stormYear, phase: 'ops', kind: 'hazard', text: 'Global dust storm' });
-    if (b.hazardMargin < 0) fail(cruise + D.stormYear, 'ops', 'storm', `Dust storm: arrays gave ${Math.round(b.stormSupply)} W, survival needs ${Math.round(b.stormLoad)} W.`);
+    if (b.hazardMargin < 0) fail(cruise + D.stormYear, 'ops', 'storm', `Dust storm: arrays gave ${R(b.stormSupply)} W, survival needs ${R(b.stormLoad)} W.`);
   }
   if (D.id === 'europa') events.push({ t: cruise + 0.1, phase: 'ops', kind: 'hazard', text: 'Radiation belts' });
   if (D.id === 'mercury') events.push({ t: cruise + 0.01, phase: 'ops', kind: 'hazard', text: '10x sunlight' });
@@ -356,22 +418,22 @@ function finish(b, opts, events, failure) {
   const scienceGb = rate * opsTime;
   let outcome = 'none';
   if (opsTime >= MIN_OPS_YEARS && scienceGb > 0) outcome = 'min';
-  if (!failure && scienceGb >= D.fullGb) outcome = 'full';
+  if (!failure && scienceGb >= b.goalGb) outcome = 'full';
   if (!failure && outcome === 'min') {
-    failure = { t: end, phase: 'ops', mode: 'data', hazard: D.id === 'pluto', text: `Data shortfall: returned ${fmtGb(scienceGb)} of ${D.fullGb} Gbit goal (${Math.round(100 * scienceGb / D.fullGb)}%).`, partial: true };
+    failure = { t: end, phase: 'ops', mode: 'data', hazard: D.id === 'pluto', text: `Data shortfall: returned ${fmtGb(scienceGb)} of ${b.goalGb} Gbit goal (${R(100 * scienceGb / b.goalGb)}%).`, partial: true };
   }
-  const points = Math.round(100 * Math.min(1.5, scienceGb / D.fullGb));
-  const score = Math.round(points * D.mult);
+  const points = R(100 * Math.min(1.5, scienceGb / b.goalGb));
+  const score = R(points * D.mult);
   return { b, opts, events: events.sort((x, y) => x.t - y.t), failure, outcome, scienceGb, points, score, cost: b.cost, opsTime };
 }
 
 function pctSun(D) {
   const p = 100 * Math.min(D.solarCap, 1 / D.sunAU ** 2);
-  return p >= 10 ? `${Math.round(p)}%` : p >= 1 ? `${p.toFixed(1)}%` : `${p.toFixed(2)}%`;
+  return p >= 10 ? `${R(p)}%` : p >= 1 ? `${p.toFixed(1)}%` : `${p.toFixed(2)}%`;
 }
 
 export function fmtGb(x) {
-  if (x >= 100) return `${Math.round(x)} Gbit`;
+  if (x >= 100) return `${R(x)} Gbit`;
   if (x >= 10) return `${x.toFixed(0)} Gbit`;
   return `${x.toFixed(1)} Gbit`;
 }
@@ -380,83 +442,88 @@ export function fmtGb(x) {
 // Each chain is a list of short steps that read left to right with arrows.
 export function explain(d, res) {
   const f = res.failure; if (!f) return [];
-  const b = res.b; const { P, D, tr } = b;
+  const b = res.b; const { P, D, tr, C } = b;
   const trLabel = d.traj === 'assist' ? `Assist (${tr.label})` : 'Direct trajectory';
-  const growthPct = Math.round((res.opts.growth || 0) * 100);
+  const growthPct = R((res.opts.growth || 0) * 100);
   const chains = [];
   const est = budgets(d, ESTIMATE);
-  const heavy = massDrivers(d).slice(0, 2).map((x) => `${x.part.name} (+${x.extra} kg vs lightest)`);
+  const heavy = massDrivers(b).slice(0, 2).map((x) => `${x.name} (${R(x.mass)} kg)`);
+  const units = P.power.rtgUnits;
 
   switch (f.mode) {
     case 'cost': {
-      const c = [`Parts $${Math.round(b.partCost)}M`, `${P.launcher.name} $${b.launchCost}M`, `${trLabel} -> ${fmtYr(b.years)} of ops x $${D.opsCostPerYr}M/yr = $${Math.round(b.opsCost)}M`, `Total $${Math.round(b.cost)}M vs budget $${D.budget}M`, `Over by $${Math.round(b.cost - D.budget)}M -> launch blocked`];
-      chains.push(c);
-      const pricey = costDrivers(d)[0];
-      if (pricey) chains.push([`Biggest spend you chose: ${pricey.part.name} ($${pricey.part.cost}M)`, `a cheaper option saves $${pricey.extra}M`]);
+      chains.push([`Parts $${R(b.partCost)}M`, `${P.launcher.name} $${b.launchCost}M`, `${trLabel} -> ${fmtYr(b.years)} of ops x $${D.opsCostPerYr}M/yr = $${R(b.opsCost)}M`, `Total $${R(b.cost)}M vs funding $${C.budget}M`, `Over by $${R(b.cost - C.budget)}M -> contract cancelled`]);
+      const pricey = costDrivers(b)[0];
+      if (pricey) chains.push([`Biggest spend: ${pricey.name} ($${R(pricey.cost)}M)`, 'Sizing it down or taking a smaller rocket saves the most']);
+      break;
+    }
+    case 'deadline': {
+      chains.push([`${trLabel} -> ${fmtYr(tr.cruise)} trip`, `Contract deadline: ${fmtYr(C.deadline)}`, `Still ${fmtYr(tr.cruise - C.deadline)} out when the window closed`, 'Contract expired']);
+      if (d.traj === 'assist') chains.push([`Direct takes ${fmtYr(D.traj.direct.cruise)}`, 'but needs more launch energy', 'a bigger rocket and more money']);
       break;
     }
     case 'launcher': {
-      const c = [`${trLabel} -> launch energy C3 = ${tr.c3}`, `${P.launcher.name} lifts only ${Math.round(b.cap)} kg at that energy`];
-      if (heavy.length) c.push(`Heaviest choices: ${heavy.join(', ')}`);
-      c.push(`Dry ${Math.round(b.dry)} kg + propellant ${b.prop} kg = ${Math.round(b.wet)} kg`);
-      c.push(`Over by ${Math.round(b.wet - b.cap)} kg -> launcher overload`);
+      const c = [`${trLabel} -> launch energy C3 = ${tr.c3}`, `${P.launcher.name} lifts only ${R(b.cap)} kg at that energy`];
+      if (heavy.length) c.push(`Heaviest parts: ${heavy.join(', ')}`);
+      c.push(`Dry ${R(b.dry)} kg + fuel ${R(b.prop)} kg = ${R(b.wet)} kg`);
+      c.push(`Over by ${R(b.wet - b.cap)} kg -> launcher overload`);
       chains.push(c);
-      if (est.wet <= b.cap) chains.push([`On paper it fit (${Math.round(est.wet)} kg)`, `Real hardware came in ${growthPct}% heavier`, 'Zero margin -> overload. Margins matter.']);
+      if (est.wet <= b.cap) chains.push([`On paper it fit (${R(est.wet)} kg)`, `Real hardware came in ${growthPct}% heavier`, 'Zero margin -> overload. Margins matter.']);
       break;
     }
     case 'insertion': {
       if (f.ion) {
-        chains.push([`${P.engine.name} needs ${P.engine.powerW} W to thrust`, `${P.power.name} gives ${Math.round(b.supplyArrive)} W at ${D.name}`, `Short by ${Math.round(b.ionLoad - b.supplyArrive)} W -> engine can't fire -> missed orbit insertion`]);
+        chains.push([`${P.engine.name} needs ${P.engine.powerW} W to thrust`, `${P.power.name} gives ${R(b.supplyArrive)} W at ${D.name}`, `Short by ${R(b.ionLoad - b.supplyArrive)} W -> engine can't fire -> missed orbit insertion`]);
         break;
       }
       const c = [];
       if (heavy.length) c.push(`${heavy.join(' + ')}`);
-      if (P.payload.powerW >= 100 && P.power.type === 'solar') c.push(`${P.payload.name} draws ${P.payload.powerW} W -> needs ${P.power.name}`);
-      c.push(`Dry mass ${Math.round(b.dry)} kg (incl. ${Math.round(b.structure * (1 + res.opts.growth))} kg structure)`);
-      c.push(`${P.tank.name} ${b.prop} kg + ${P.engine.name} (Isp ${P.engine.isp} s) -> ${Math.round(b.dvAvail)} m/s`);
+      c.push(`Dry mass ${R(b.dry)} kg (incl. ${R(b.structure * (1 + res.opts.growth))} kg structure)`);
+      c.push(`${R(b.prop)} kg of fuel + ${P.engine.name} (Isp ${P.engine.isp} s) -> ${R(b.dvAvail)} m/s`);
       if (b.dvPenalty > 1) c.push(`Low thrust: needs ${b.dvPenalty}x more delta-v to capture`);
-      c.push(`Needed ${Math.round(b.dvReq)} m/s -> short by ${Math.round(b.dvReq - b.dvAvail)} m/s -> missed orbit insertion`);
+      c.push(`Needed ${R(b.dvReq)} m/s -> short by ${R(b.dvReq - b.dvAvail)} m/s -> missed orbit insertion`);
       chains.push(c);
-      if (P.thermal.id === 'vault') chains.push([`Radiation vault (+${P.thermal.mass} kg)`, '+mass', 'delta-v short']);
-      if (est.dvAvail >= est.dvReq) chains.push([`On paper you had ${Math.round(est.dvAvail)} m/s`, `Hardware came in ${growthPct}% heavier`, 'Margin gone. Margins matter.']);
+      if (est.dvAvail >= est.dvReq) chains.push([`On paper you had ${R(est.dvAvail)} m/s`, `Hardware came in ${growthPct}% heavier`, 'Margin gone. Margins matter.']);
       if (res.opts.event && (res.opts.event.ispFactor || res.opts.event.extraDv)) chains.push([`Bad luck: ${res.opts.event.text}`, 'Small margin could not absorb it']);
       break;
     }
     case 'brownout': {
-      const dist = P.power.type === 'solar' ? `${D.name} at ${D.sunAU} AU -> sunlight ${pctSun(D)} of Earth's` : `RTG decays ${(P.power.decay * 100).toFixed(1)}%/yr`;
+      const dist = [];
+      if (P.power.hasSolar) dist.push(`${D.name} at ${D.sunAU} AU -> sunlight ${pctSun(D)} of Earth's`);
+      if (P.power.hasRtg) dist.push(`RTGs decay ${(P.power.decay * 100).toFixed(1)}%/yr`);
       chains.push([
-        `Load: bus ${BUS.powerW} W + ${P.payload.name} ${P.payload.powerW} W + ${P.comms.name} ${P.comms.powerW} W = ${Math.round(b.mainLoad)} W`,
-        `${P.power.name}: ${P.power.outW} W at Earth`, dist,
-        `Year ${fmtYr(f.t, true)} -> only ${Math.round(f.supply)} W`, `Short by ${Math.round(b.mainLoad - f.supply)} W -> brownout`,
+        `Load: bus ${BUS.powerW} W + ${P.payload.name} ${P.payload.powerW} W + antenna ${P.comms.powerW} W = ${R(b.mainLoad)} W`,
+        `${P.power.name}: ${R(P.power.solarW + P.power.rtgW)} W at Earth`, ...dist,
+        `Year ${fmtYr(f.t, true)} -> only ${R(f.supply)} W`, `Short by ${R(b.mainLoad - f.supply)} W -> brownout`,
       ]);
       if (P.engine.lowThrust) chains.push(['Ion engine chosen', 'needed power', 'power system sized too small for science too']);
       break;
     }
     case 'freeze': {
       chains.push([
-        `${D.name} is cold -> ${P.thermal.name} needs ${Math.round(b.heater)} W of heaters`,
-        `Heater added to load -> ${Math.round(b.load)} W total`,
-        `${P.power.name} gives ${Math.round(f.supply)} W here (year ${fmtYr(f.t, true)})`,
+        `${D.name} is cold -> ${n1(P.thermal.heaterFactor)}x heater factor needs ${R(b.heater)} W of heaters`,
+        `Heater added to load -> ${R(b.load)} W total`,
+        `${P.power.name} gives ${R(f.supply)} W here (year ${fmtYr(f.t, true)})`,
         'Heaters starved -> froze',
       ]);
-      if (P.power.type !== 'rtg') chains.push(['An RTG\'s waste heat would have kept you warm', 'but it costs mass and money']);
+      if (!P.power.hasRtg) chains.push(['An RTG\'s waste heat would have kept you warm', 'but it costs mass and money']);
       break;
     }
     case 'overheat': {
       const c = [`${D.name}: ${D.hotFlux}x Earth sunlight`];
-      if (P.power.type === 'rtg') c.push(`RTG adds its own waste heat (+${RTG_HOT_FLUX}x)`);
-      c.push(`${P.thermal.name} can reject ${P.thermal.hotLimit}x`, 'Overheated on arrival');
+      if (units) c.push(`RTG waste heat adds +${n1(units * RTG_HOT_FLUX)}x`);
+      c.push(`${n1(paramVal(d, 'radiator'))} m² of radiators reject ${n1(P.thermal.hotLimit)}x`, 'Overheated on arrival');
       chains.push(c);
       break;
     }
     case 'flyby': {
       if (tr.flyby === 'venus') {
         const c = [`${trLabel} -> pass Venus at 0.7 AU`, `Sunlight ${FLYBYS.venus.flux}x Earth`];
-        if (P.power.type === 'rtg') c.push(`+ RTG waste heat ${RTG_HOT_FLUX}x`);
-        c.push(`${P.thermal.name} limit ${P.thermal.hotLimit}x -> overheated in year ${fmtYr(tr.flybyYear, true)}`);
+        if (units) c.push(`+ RTG waste heat ${n1(units * RTG_HOT_FLUX)}x`);
+        c.push(`Radiators reject ${n1(P.thermal.hotLimit)}x -> overheated in year ${fmtYr(tr.flybyYear, true)}`);
         chains.push(c);
       } else {
-        chains.push([`${trLabel} -> pass close to Jupiter`, `+${FLYBYS.jupiter.dose} krad in one day`, `${P.thermal.name} tolerates ${P.thermal.radTol} krad`, `Total ${Math.round(b.flybyDose)} krad -> electronics fried at Jupiter`]);
+        chains.push([`${trLabel} -> pass close to Jupiter`, `+${FLYBYS.jupiter.dose} krad in one day`, `${n1(P.thermal.radTol)} krad of shielding`, `Total ${R(b.flybyDose)} krad -> electronics fried at Jupiter`]);
       }
       break;
     }
@@ -466,9 +533,9 @@ export function explain(d, res) {
       c.push(`${fmtYr(b.cruise)} cruise x ${D.cruiseDosePerYr} krad/yr`);
       if (D.opsDosePerYr > 5) c.push(`${D.name} operations ${D.opsDosePerYr} krad/yr`);
       if (res.opts.event && res.opts.event.dose) c.push(`Solar flare +${res.opts.event.dose} krad`);
-      c.push(`${P.thermal.name} tolerates ${P.thermal.radTol} krad`, `Failed in year ${fmtYr(f.t, true)}`);
+      c.push(`${n1(paramVal(d, 'shield'))} cm of shielding tolerates ${R(P.thermal.radTol)} krad`, `Failed in year ${fmtYr(f.t, true)}`);
       chains.push(c);
-      if (P.thermal.id !== 'vault') chains.push(['Shielding (vault) would add mass', 'mass costs delta-v and launcher size', 'that is the trade']);
+      chains.push(['More shielding adds mass', 'mass costs fuel and rocket size', 'that is the trade']);
       break;
     }
     case 'life': {
@@ -476,12 +543,12 @@ export function explain(d, res) {
       const steps = [];
       if (d.traj === 'assist') {
         const dir = budgets({ ...d, traj: 'direct' }, ESTIMATE);
-        steps.push(`Assist chosen`);
+        steps.push('Assist chosen');
         if (dir.cap != null && dir.massMargin < 0) steps.push(`(Direct would overload the ${P.launcher.name})`);
         else steps.push('launcher kept small (saved $)');
       } else steps.push('Direct trajectory');
       steps.push(`${fmtYr(c.need)} ${c.key === 'engine' ? 'until arrival burn' : 'mission'}`);
-      steps.push(`${c.part.name} design life ${c.part.life} yr`);
+      steps.push(`${c.part.name} design life ${n1(c.part.life)} yr`);
       steps.push(`Failed in year ${Math.ceil(c.part.life + 0.001)}`);
       chains.push(steps);
       break;
@@ -489,9 +556,9 @@ export function explain(d, res) {
     case 'night': {
       chains.push([
         'Lunar night: 14 days, no sun',
-        `Survival load: bus ${BUS.survivalW} W + heaters ${Math.round(b.nightLoad - BUS.survivalW)} W (${P.thermal.name})`,
+        `Survival load: bus ${BUS.survivalW} W + heaters ${R(b.nightLoad - BUS.survivalW)} W`,
         `x 336 h = ${(b.nightNeedWh / 1000).toFixed(1)} kWh`,
-        `${P.power.name} battery holds ${(b.batteryWh / 1000).toFixed(1)} kWh`,
+        `Battery holds ${(b.batteryWh / 1000).toFixed(1)} kWh`,
         'Battery dead -> froze on night 1',
       ]);
       break;
@@ -499,8 +566,8 @@ export function explain(d, res) {
     case 'storm': {
       chains.push([
         'Global dust storm: sunlight -80%',
-        `${P.power.name} drops to ${Math.round(b.stormSupply)} W`,
-        `Survival needs bus ${BUS.survivalW} W + heaters ${Math.round(b.heater)} W = ${Math.round(b.stormLoad)} W`,
+        `${P.power.name} drops to ${R(b.stormSupply)} W`,
+        `Survival needs bus ${BUS.survivalW} W + heaters ${R(b.heater)} W = ${R(b.stormLoad)} W`,
         'Brownout during the storm',
       ]);
       break;
@@ -508,13 +575,13 @@ export function explain(d, res) {
     case 'data': {
       const genLimited = b.genPerYr <= b.downPerYr;
       if (genLimited) {
-        chains.push([`${P.payload.name} makes only ${fmtGb(b.genPerYr)}/yr`, `${fmtYr(res.opsTime)} of operations`, `Returned ${fmtGb(res.scienceGb)} of ${D.fullGb} Gbit goal`]);
+        chains.push([`${P.payload.name} makes only ${fmtGb(b.genPerYr)}/yr`, `${fmtYr(res.opsTime)} of operations`, `Returned ${fmtGb(res.scienceGb)} of ${b.goalGb} Gbit goal`]);
       } else {
         chains.push([
           `${P.payload.name} makes ${fmtGb(b.genPerYr)}/yr`,
           `${P.comms.name} at ${D.earthAU} AU from Earth downlinks ${fmtGb(b.downPerYr)}/yr`,
           'Data piles up onboard',
-          `Only ${Math.round(100 * Math.min(b.downPerYr, b.genPerYr) * D.opsYears / D.fullGb)}% of goal returned`,
+          `Only ${R(100 * Math.min(b.downPerYr, b.genPerYr) * D.opsYears / b.goalGb)}% of goal returned`,
         ]);
       }
       break;
@@ -524,58 +591,67 @@ export function explain(d, res) {
   return chains;
 }
 
-// Which choices added the most mass vs the lightest option in their slot.
-export function massDrivers(d) {
-  const out = [];
-  for (const s of SLOTS) {
-    if (!s.list[0] || s.list[0].mass == null) continue;
-    const p = s.list.find((x) => x.id === d[s.key]); if (!p) continue;
-    const min = Math.min(...s.list.map((x) => x.mass));
-    if (p.mass - min > 0) out.push({ slot: s, part: p, extra: p.mass - min });
-  }
-  return out.sort((a, b) => b.extra - a.extra);
+// Which parts weigh the most, and which cost the most, in the current design.
+export function massDrivers(b) {
+  const P = b.P;
+  return [P.payload, P.power, P.thermal, P.comms, P.engine, P.tank].filter(Boolean)
+    .map((p) => ({ name: p.name, mass: p.mass })).sort((a, c) => c.mass - a.mass);
 }
 
-export function costDrivers(d) {
-  const out = [];
-  for (const s of SLOTS) {
-    if (!s.list[0] || s.list[0].cost == null) continue;
-    const p = s.list.find((x) => x.id === d[s.key]); if (!p) continue;
-    const min = Math.min(...s.list.map((x) => x.cost));
-    if (p.cost - min > 0) out.push({ slot: s, part: p, extra: p.cost - min });
-  }
-  return out.sort((a, b) => b.extra - a.extra);
+export function costDrivers(b) {
+  const P = b.P;
+  return [P.payload, P.power, P.thermal, P.comms, P.engine, P.tank, P.launcher].filter(Boolean)
+    .map((p) => ({ name: p.name, cost: p.cost })).sort((a, c) => c.cost - a.cost);
 }
 
 export function fmtYr(y, bare = false) {
-  if (y < 0.1) return bare ? `${Math.max(1, Math.round(y * 365))} days` : `${Math.max(1, Math.round(y * 365))} days`;
-  const s = y < 10 ? y.toFixed(1).replace(/\.0$/, '') : Math.round(y).toString();
+  if (y < 0.1) return bare ? `${Math.max(1, R(y * 365))} days` : `${Math.max(1, R(y * 365))} days`;
+  if (!bare && y < 1) return `${Math.max(1, R(y * 12))} months`;
+  const s = y < 10 ? y.toFixed(1).replace(/\.0$/, '') : R(y).toString();
   return bare ? s : `${s} yr`;
 }
 
 // Short code to call out for the whiteboard: destination + 4 characters.
 export function teamCode(d, seed, attempt) {
-  const s = SLOTS.map((x) => x.list.findIndex((p) => p.id === d[x.key])).join('') + d.dest + seed + attempt;
+  const s = JSON.stringify(Object.keys(PARAMS).map((k) => paramVal(d, k))) + [d.contract, d.engine, d.traj, d.launcher].join('') + seed + attempt;
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
   for (let i = 0; i < 4; i++) { code += alphabet[(h >>> (i * 5)) & 31]; }
-  return `${byId(DESTINATIONS, d.dest).code}-${code}`;
+  const D = byId(DESTINATIONS, byId(CONTRACTS, d.contract).dest);
+  return `${D.code}-${code}`;
 }
 
-// Every possible design for one destination (used by balance + debug).
-export function* allDesigns(dest) {
-  for (const payload of PAYLOADS) for (const power of POWER) for (const thermal of THERMAL)
-    for (const comms of COMMS) for (const engine of ENGINES) for (const tank of TANKS)
-      for (const launcher of LAUNCHERS) for (const traj of TRAJECTORIES) {
-        yield { dest, payload: payload.id, power: power.id, thermal: thermal.id, comms: comms.id, engine: engine.id, tank: tank.id, launcher: launcher.id, traj: traj.id };
-      }
+// ---------- design space for the balance test and the debug helper ----------
+// A coarse grid over every slider and choice (the sliders are continuous in the app).
+export const GRID = {
+  solarArea: [0, 3, 6, 12, 24, 40],
+  rtgUnits: [0, 1, 2],
+  batteryMoon: [3, 8, 16, 28],
+  radiator: [0, 4, 8],
+  shield: [0, 4, 10],
+  dish: [0.3, 1.2, 3],
+  txPower: [20, 60],
+  fuel: [100, 300, 600, 1100, 1500],
+};
+
+export function* designGrid(contractId) {
+  const C = byId(CONTRACTS, contractId); const D = byId(DESTINATIONS, C.dest);
+  const batts = D.nightHours ? GRID.batteryMoon : [PARAMS.battery.def];
+  for (const solarArea of GRID.solarArea) for (const rtgUnits of GRID.rtgUnits) {
+    if (solarArea === 0 && rtgUnits === 0) continue;
+    for (const battery of batts) for (const radiator of GRID.radiator) for (const shield of GRID.shield)
+      for (const dish of GRID.dish) for (const txPower of GRID.txPower) for (const fuel of GRID.fuel)
+        for (const engine of ENGINES) for (const traj of TRAJECTORIES) for (const launcher of LAUNCHERS) {
+          yield { contract: contractId, solarArea, rtgUnits, battery, radiator, shield, dish, txPower, fuel, engine: engine.id, traj: traj.id, launcher: launcher.id };
+        }
+  }
 }
 
-export function cheapestFull(dest, opts = NOMINAL) {
+export function cheapestFull(contractId, opts = NOMINAL) {
   let best = null;
-  for (const d of allDesigns(dest)) {
+  for (const d of designGrid(contractId)) {
     const r = simulate(d, opts);
     if (r.outcome === 'full' && (!best || r.cost < best.cost)) best = { d, cost: r.cost, r };
   }

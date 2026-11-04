@@ -1,5 +1,5 @@
 // All tunable numbers for Mission Design live in this file.
-// Units: mass kg, power W, cost $M, data Gbit, delta-v m/s, time years,
+// Units: mass kg, power W, cost $M, data Gbit, delta-v m/s, time years, area m^2,
 // radiation krad, C3 (launch energy) km^2/s^2, solar flux in multiples of Earth's.
 
 export const G0 = 9.81;
@@ -13,7 +13,7 @@ export const MASS_GROWTH_MAX = 0.15;
 // Avionics, computer, reaction wheels: always on board.
 export const BUS = { mass: 60, cost: 40, powerW: 60, survivalW: 15 };
 
-// RTG waste heat: warms the craft (cuts heater power) but adds heat in hot places.
+// RTG waste heat, per unit: warms the craft (cuts heater power) but adds heat in hot places.
 export const RTG_HEATER_CREDIT_W = 100;
 export const RTG_HOT_FLUX = 0.8;
 
@@ -28,19 +28,42 @@ export const FLYBYS = {
   jupiter: { name: 'Jupiter flyby', flux: 0.04, arrayHit: 0, dose: 45 },
 };
 
+// ---------- Procedural parts ----------
+// Each slider part is a formula: set a size, get mass, cost, and performance.
+export const SOLAR = { wPerM2: 150, massBase: 8, massPerM2: 2.3, costBase: 6, costPerM2: 0.9, life: 12 };
+export const RTG = { unitW: 300, mass: 110, cost: 120, decay: 0.015, life: 20 };
+export const BATTERY = { massBase: 5, massPerKWh: 4, costBase: 0.5, costPerKWh: 0.8, defaultKWh: 2 };
+// Radiator area raises the heat limit; shielding raises radiation tolerance and insulates (cuts heater power).
+export const THERMAL = {
+  massBase: 12, massPerRad: 3.5, massPerShield: 6.3, costBase: 8, costPerRad: 1.75, costPerShield: 2.2,
+  hotBase: 2.5, hotPerRad: 1.1, radTolBase: 30, radTolPerShield: 27,
+  heaterBase: 1, heaterPerShield: 0.05, heaterPerRad: 0.025, heaterMin: 0.4, life: 15, lifePerRad: 0.55,
+};
+// Downlink rate grows with dish area and transmitter power.
+export const COMMS = { rateK: 133, massBase: 3, massPerD2: 4, costBase: 5, costPerD2: 3.3, lifeBase: 20, lifePerD: 2.7 };
+export const TANK = { massBase: 5, massPerKg: 0.068, costBase: 3, costPerKg: 0.015, life: 30 };
+
+// Slider definitions: range, step, default, and what the screen calls them.
+export const PARAMS = {
+  solarArea: { label: 'Solar array area', unit: 'm²', min: 0, max: 40, step: 0.5, def: 8 },
+  rtgUnits: { label: 'RTG units', unit: '', min: 0, max: 3, step: 1, def: 0 },
+  battery: { label: 'Battery', unit: 'kWh', min: 1, max: 30, step: 1, def: 6 },
+  radiator: { label: 'Radiator area', unit: 'm²', min: 0, max: 8, step: 0.5, def: 2 },
+  shield: { label: 'Radiation shielding', unit: 'cm', min: 0, max: 10, step: 0.5, def: 2 },
+  dish: { label: 'Dish diameter', unit: 'm', min: 0.3, max: 3.5, step: 0.1, def: 1 },
+  txPower: { label: 'Transmitter power', unit: 'W', min: 10, max: 100, step: 5, def: 30 },
+  fuel: { label: 'Fuel', unit: 'kg', min: 50, max: 1500, step: 10, def: 400 },
+};
+
 export const DESTINATIONS = [
   {
     id: 'mercury', name: 'Mercury', code: 'MER', color: '#b5a48f',
-    goal: 'Orbit Mercury and map the surface.',
     dvLabel: 'Extreme', thermalLabel: 'Extreme heat', difficulty: 5, mult: 2.5,
     hazard: { name: 'Sun at 10x', text: '10x sunlight cooks solar arrays and needs big radiators.' },
     sunAU: 0.39, solarCap: 2.0, solarDeg: 0.07, earthAU: 1.0, contact: 0.33,
     hotFlux: 10, coldW: 0,
     cruiseDosePerYr: 2, opsDosePerYr: 15,
-    opsYears: 2, opsCostPerYr: 22, budget: 680,
-    fullGb: 200, lowThrustPenalty: 1.1,
-    minGoal: 'Reach Mercury orbit and start operating.',
-    fullGoal: 'Return 200 Gbit of science.',
+    opsYears: 2, opsCostPerYr: 22, lowThrustPenalty: 1.1,
     traj: {
       direct: { label: 'Direct', c3: 35, dv: 2300, cruise: 1.0 },
       assist: { label: 'Venus flybys', c3: 16, dv: 1600, cruise: 6.5, flyby: 'venus', flybyYear: 2 },
@@ -48,16 +71,12 @@ export const DESTINATIONS = [
   },
   {
     id: 'moon', name: 'Moon', code: 'MOO', color: '#c9c9c9',
-    goal: 'Land near the south pole and run a year of science.',
     dvLabel: 'Easy', thermalLabel: 'Extreme swings', difficulty: 3, mult: 1.3,
     hazard: { name: 'Lunar night', text: '14 days of dark and -170 C. No sun: batteries and heaters must carry you.' },
     sunAU: 1.0, solarCap: 1.0, solarDeg: 0.02, earthAU: 0.05, contact: 0.5,
     hotFlux: 2.2, coldW: 60, nightHours: 336,
     cruiseDosePerYr: 3, opsDosePerYr: 8,
-    opsYears: 1, opsCostPerYr: 15, budget: 460,
-    fullGb: 300, lowThrustPenalty: 99,
-    minGoal: 'Land and start operating.',
-    fullGoal: 'Survive every lunar night and return 300 Gbit.',
+    opsYears: 1, opsCostPerYr: 15, lowThrustPenalty: 99,
     traj: {
       direct: { label: 'Direct', c3: -2, dv: 1800, cruise: 0.02 },
       assist: { label: 'Low-energy ballistic transfer', c3: -1, dv: 1500, cruise: 0.3 },
@@ -65,16 +84,12 @@ export const DESTINATIONS = [
   },
   {
     id: 'mars', name: 'Mars', code: 'MAR', color: '#c1440e',
-    goal: 'Land a science station on Mars.',
     dvLabel: 'Easy', thermalLabel: 'Mild', difficulty: 1, mult: 1.0,
     hazard: { name: 'Dust storm', text: 'A global dust storm cuts sunlight by 80% for weeks.' },
     sunAU: 1.52, solarCap: 1.0, solarDeg: 0.02, earthAU: 1.5, contact: 0.33,
     hotFlux: 0.43, coldW: 45, stormFactor: 0.2, stormYear: 0.6,
     cruiseDosePerYr: 3, opsDosePerYr: 5,
-    opsYears: 2, opsCostPerYr: 18, budget: 420,
-    fullGb: 150, lowThrustPenalty: 1.6,
-    minGoal: 'Land and start operating.',
-    fullGoal: 'Ride out the dust storm and return 150 Gbit.',
+    opsYears: 2, opsCostPerYr: 18, lowThrustPenalty: 1.6,
     traj: {
       direct: { label: 'Direct', c3: 14, dv: 1650, cruise: 0.7 },
       assist: { label: 'Earth flyby', c3: 6, dv: 1400, cruise: 2.0 },
@@ -82,16 +97,12 @@ export const DESTINATIONS = [
   },
   {
     id: 'europa', name: 'Europa', code: 'EUR', color: '#d8c7a3',
-    goal: 'Orbit Jupiter and fly past Europa dozens of times.',
     dvLabel: 'Moderate', thermalLabel: 'Cold', difficulty: 4, mult: 1.8,
     hazard: { name: 'Jupiter radiation', text: 'Jupiter\'s radiation belts fry unshielded electronics.' },
     sunAU: 5.2, solarCap: 1.0, solarDeg: 0.04, earthAU: 5.2, contact: 0.33,
     hotFlux: 0.04, coldW: 60,
     cruiseDosePerYr: 2, opsDosePerYr: 35,
-    opsYears: 2, opsCostPerYr: 25, budget: 760,
-    fullGb: 90, lowThrustPenalty: 1.3,
-    minGoal: 'Enter Jupiter orbit and start Europa flybys.',
-    fullGoal: 'Return 90 Gbit before radiation wins.',
+    opsYears: 2, opsCostPerYr: 25, lowThrustPenalty: 1.3,
     traj: {
       direct: { label: 'Direct', c3: 45, dv: 1400, cruise: 3.0 },
       assist: { label: 'Mars + Earth flybys', c3: 24, dv: 1200, cruise: 6.0 },
@@ -99,16 +110,12 @@ export const DESTINATIONS = [
   },
   {
     id: 'pluto', name: 'Pluto', code: 'PLU', color: '#d9b38c',
-    goal: 'Fly past Pluto and send the pictures home.',
     dvLabel: 'Extreme', thermalLabel: 'Deep cold', difficulty: 5, mult: 2.5,
     hazard: { name: 'Faint signal', text: 'At 33 AU the radio signal is a trickle, and the trip takes about a decade.' },
     sunAU: 33, solarCap: 1.0, solarDeg: 0.02, earthAU: 33, contact: 0.5,
     hotFlux: 0.001, coldW: 110,
     cruiseDosePerYr: 1.5, opsDosePerYr: 1,
-    opsYears: 1, opsCostPerYr: 18, budget: 800,
-    fullGb: 1.6, lowThrustPenalty: 1.0,
-    minGoal: 'Reach Pluto and take data.',
-    fullGoal: 'Downlink 1.6 Gbit of Pluto science.',
+    opsYears: 1, opsCostPerYr: 18, lowThrustPenalty: 1.0,
     traj: {
       direct: { label: 'Direct', c3: 60, dv: 600, cruise: 8.0 },
       assist: { label: 'Jupiter flyby', c3: 40, dv: 450, cruise: 9.5, flyby: 'jupiter', flybyYear: 1.1 },
@@ -116,43 +123,31 @@ export const DESTINATIONS = [
   },
 ];
 
-// ---------- Parts ----------
-// Every part has: id, name, role, blurb, mass, cost, life (design life, years).
-
+// ---------- Fixed instruments (the contract names which one to carry) ----------
 export const PAYLOADS = [
-  { id: 'cam', name: 'Survey', blurb: 'Survey camera. Wide views, low data.', mass: 20, cost: 25, powerW: 25, genGb: 80, life: 15 },
-  { id: 'spec', name: 'Spectrometry', blurb: 'Spectrometer suite. What it is made of.', mass: 55, cost: 60, powerW: 60, genGb: 400, life: 11 },
-  { id: 'hires', name: 'Imaging + radar', blurb: 'Hi-res imager and radar. Huge data, heavy, hungry.', mass: 140, cost: 110, powerW: 150, genGb: 3000, life: 10 },
+  { id: 'cam', name: 'Survey camera', blurb: 'Wide views, low data.', mass: 20, cost: 25, powerW: 25, genGb: 80, life: 15 },
+  { id: 'spec', name: 'Spectrometer suite', blurb: 'What the surface is made of.', mass: 55, cost: 60, powerW: 60, genGb: 400, life: 11 },
+  { id: 'hires', name: 'Imager + radar', blurb: 'Fine detail, even below the surface.', mass: 140, cost: 110, powerW: 150, genGb: 3000, life: 10 },
 ];
 
-export const POWER = [
-  { id: 'ssolar', name: 'Small solar arrays', blurb: 'Light and cheap. Weak far from the Sun.', type: 'solar', mass: 30, cost: 15, outW: 600, batteryWh: 4000, life: 9 },
-  { id: 'lsolar', name: 'Large solar arrays', blurb: 'Lots of power near the Sun. Big battery.', type: 'solar', mass: 95, cost: 40, outW: 6000, batteryWh: 22000, life: 12 },
-  { id: 'rtg', name: 'RTG (nuclear)', blurb: 'Steady power anywhere. Heavy, pricey, warm.', type: 'rtg', mass: 110, cost: 120, outW: 300, decay: 0.015, batteryWh: 1500, life: 20 },
-];
-
-export const THERMAL = [
-  { id: 'mli', name: 'Light blankets', blurb: 'Basic insulation. Light.', mass: 12, cost: 8, hotLimit: 2.5, heaterFactor: 1.0, radTol: 30, life: 15 },
-  { id: 'rad', name: 'Radiators + louvers', blurb: 'Dumps heat. Handles fierce sun.', mass: 40, cost: 22, hotLimit: 11, heaterFactor: 0.8, radTol: 90, life: 10.5 },
-  { id: 'vault', name: 'Radiation vault', blurb: 'Shielded box + thick insulation.', mass: 75, cost: 30, hotLimit: 3, heaterFactor: 0.5, radTol: 300, life: 15 },
-];
-
-export const COMMS = [
-  { id: 'lga', name: 'Low-gain antenna', blurb: 'Tiny and tough. Slow.', mass: 4, cost: 5, powerW: 10, rateGb: 400, life: 20 },
-  { id: 'mga', name: 'Medium dish (1 m)', blurb: '10x faster.', mass: 15, cost: 15, powerW: 30, rateGb: 4000, life: 15 },
-  { id: 'hga', name: 'High-gain dish (3 m)', blurb: '100x faster. Heavy, needs pointing.', mass: 40, cost: 35, powerW: 60, rateGb: 40000, life: 12 },
+// ---------- Contracts ----------
+// The hard constraints: where, which instrument, how much science, arrive by the deadline
+// (years after launch), and the funding cap (the contract ends when the money does).
+export const CONTRACTS = [
+  { id: 'lunar-survey', name: 'Lunar Pathfinder', dest: 'moon', payload: 'cam', goalGb: 70, deadline: 0.25, budget: 360, brief: 'Land near the south pole. Fast and cheap.' },
+  { id: 'lunar-spec', name: 'South Pole Spectrometry', dest: 'moon', payload: 'spec', goalGb: 300, deadline: 0.5, budget: 460, brief: 'Survive the lunar night and map the ice.' },
+  { id: 'mars-survey', name: 'Mars Survey Lander', dest: 'mars', payload: 'cam', goalGb: 150, deadline: 1.5, budget: 380, brief: 'Ride out the dust storm and send pictures home.' },
+  { id: 'mars-radar', name: 'Mars Subsurface Radar', dest: 'mars', payload: 'hires', goalGb: 1500, deadline: 3, budget: 640, brief: 'Radar under the surface. Heavy, hungry, huge data.' },
+  { id: 'mercury-survey', name: 'Mercury Surveyor', dest: 'mercury', payload: 'cam', goalGb: 150, deadline: 8, budget: 600, brief: 'Orbit Mercury and map the surface.' },
+  { id: 'europa-spec', name: 'Europa Flyby Spectrometry', dest: 'europa', payload: 'spec', goalGb: 90, deadline: 7, budget: 760, brief: 'Fly past Europa before the radiation wins.' },
+  { id: 'pluto-survey', name: 'Pluto Flyby Imaging', dest: 'pluto', payload: 'cam', goalGb: 1.6, deadline: 10, budget: 800, brief: 'A decade out. Send the pictures home.' },
+  { id: 'pluto-spec', name: 'Pluto Flyby Spectrometry', dest: 'pluto', payload: 'spec', goalGb: 1.6, deadline: 9, budget: 800, brief: 'The same trip, a hungrier instrument, a tighter deadline.' },
 ];
 
 export const ENGINES = [
   { id: 'mono', name: 'Monoprop thrusters', blurb: 'Simple and light. Low efficiency.', mass: 12, cost: 8, isp: 225, thrustN: 100, life: 15 },
   { id: 'biprop', name: 'Biprop main engine', blurb: 'Strong and efficient.', mass: 35, cost: 22, isp: 320, thrustN: 450, life: 12 },
   { id: 'ion', name: 'Ion engine', blurb: '10x efficiency, tiny thrust. Needs 600 W.', mass: 70, cost: 50, isp: 3000, thrustN: 0.2, lowThrust: true, powerW: 600, life: 6 },
-];
-
-export const TANKS = [
-  { id: 'stank', name: 'Small tank', blurb: '150 kg propellant.', mass: 15, cost: 5, prop: 150, life: 30 },
-  { id: 'mtank', name: 'Medium tank', blurb: '450 kg propellant.', mass: 35, cost: 10, prop: 450, life: 30 },
-  { id: 'ltank', name: 'Large tank', blurb: '1100 kg propellant.', mass: 80, cost: 18, prop: 1100, life: 30 },
 ];
 
 // Capacity to a given launch energy: cap = baseKg * exp(-c3 / falloff)
@@ -177,14 +172,14 @@ export const RANDOM_EVENTS = [
   { id: 'calm', text: 'Quiet cruise. Nothing unusual.' },
 ];
 
-// The part slots in build order, with the role that owns each one.
-export const SLOTS = [
-  { key: 'payload', label: 'Mission', role: 'Science', list: PAYLOADS, screen: 2 },
-  { key: 'power', label: 'Power system', role: 'Power & Thermal', list: POWER, screen: 3 },
-  { key: 'thermal', label: 'Thermal / protection', role: 'Power & Thermal', list: THERMAL, screen: 3 },
-  { key: 'comms', label: 'Antenna', role: 'Comms & Data', list: COMMS, screen: 3 },
-  { key: 'engine', label: 'Engine', role: 'Propulsion', list: ENGINES, screen: 3 },
-  { key: 'tank', label: 'Propellant tank', role: 'Propulsion', list: TANKS, screen: 3 },
-  { key: 'launcher', label: 'Launcher', role: 'Systems', list: LAUNCHERS, screen: 4 },
-  { key: 'traj', label: 'Trajectory', role: 'Systems', list: TRAJECTORIES, screen: 4 },
+// The design screens after the contract, in order. `list` marks a discrete choice;
+// `params` are the sliders shown on that screen.
+export const STEPS = [
+  { key: 'power', label: 'Power', role: 'Spacecraft bus', params: ['solarArea', 'rtgUnits', 'battery'] },
+  { key: 'thermal', label: 'Thermal', role: 'Spacecraft bus', params: ['radiator', 'shield'] },
+  { key: 'comms', label: 'Antenna', role: 'Spacecraft bus', params: ['dish', 'txPower'] },
+  { key: 'traj', label: 'Route', role: 'Mission plan', list: TRAJECTORIES },
+  { key: 'engine', label: 'Engine', role: 'Propulsion', list: ENGINES },
+  { key: 'tank', label: 'Fuel', role: 'Propulsion', params: ['fuel'] },
+  { key: 'launcher', label: 'Rocket', role: 'Launch vehicle', list: LAUNCHERS },
 ];

@@ -1,10 +1,10 @@
 import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
 import './style.css';
-import { DESTINATIONS, SLOTS, FLYBYS, LAUNCHERS } from './data.js';
+import { DESTINATIONS, CONTRACTS, PAYLOADS, PARAMS, STEPS, FLYBYS } from './data.js';
 import {
-  budgets, simulate, explain, launchConditions, teamCode, ESTIMATE,
-  isComplete, cheapestFull, allDesigns, mulberry32, launchCapacity, fmtYr, fmtGb,
+  budgets, parts, simulate, explain, launchConditions, teamCode, ESTIMATE, paramVal,
+  isComplete, cheapestFull, mulberry32, launchCapacity, fmtYr, fmtGb,
 } from './model.js';
 import { consideration } from './considerations.js';
 import {
@@ -14,31 +14,33 @@ import { COUPLING, BUDGET_LABEL, couplingMap } from './coupling.js';
 import { ICON, MARK } from './icons.js';
 
 // ---------- flags + state ----------
-const params = new URLSearchParams(location.search);
-const DEBUG = params.has('debug');
-const URL_SEED = params.has('seed') ? Math.abs(parseInt(params.get('seed'), 10)) || 1 : null;
-const STORE = 'mission-design-v2';
+const query = new URLSearchParams(location.search);
+const DEBUG = query.has('debug');
+const URL_SEED = query.has('seed') ? Math.abs(parseInt(query.get('seed'), 10)) || 1 : null;
+const STORE = 'mission-design-v3';
 
-// One screen per design choice. Trajectory comes before the engine, tank, and
-// launcher because all three depend on the route.
-const FLOW = ['dest', 'payload', 'power', 'thermal', 'comms', 'traj', 'engine', 'tank', 'launcher', 'review', 'launch'];
-const SLOT = Object.fromEntries(SLOTS.map((s) => [s.key, s]));
-const STEP_NAME = { dest: 'Destination', review: 'Review', launch: 'Launch' };
-const stepName = (k) => STEP_NAME[k] || SLOT[k].label;
+// Contract first, then the spacecraft bus, then the route and propulsion (both depend
+// on the target), then the rocket, which is picked last with the bus mass locked in.
+const FLOW = ['contract', ...STEPS.map((s) => s.key), 'review', 'launch'];
+const STEP = Object.fromEntries(STEPS.map((s) => [s.key, s]));
+const STEP_NAME = { contract: 'Contract', review: 'Review', launch: 'Launch' };
+const stepName = (k) => STEP_NAME[k] || STEP[k].label;
 
-// Which budget graphs each choice moves the most.
-const SLOT_CHARTS = {
-  payload: ['data', 'power', 'mass'],
+// Which budget graphs each screen moves the most.
+const SCREEN_CHARTS = {
   power: ['power', 'night', 'mass'],
   thermal: ['thermal', 'rad', 'power'],
   comms: ['data', 'power'],
-  traj: ['cost', 'life', 'mass'],
+  traj: ['time', 'cost', 'life'],
   engine: ['dv', 'power', 'life'],
   tank: ['dv', 'mass'],
   launcher: ['mass', 'cost'],
 };
 
-const blank = () => ({ dest: null, payload: null, power: null, thermal: null, comms: null, engine: null, tank: null, launcher: null, traj: null });
+const blank = () => ({
+  contract: null, engine: null, traj: null, launcher: null,
+  ...Object.fromEntries(Object.entries(PARAMS).map(([k, p]) => [k, p.def])),
+});
 const fresh = () => ({ step: 0, design: blank(), attempt: 1, seed: URL_SEED ?? 1000 + Math.floor(Math.random() * 9000), history: [], open: [] });
 
 function load() {
@@ -51,8 +53,8 @@ function load() {
   } catch { return null; }
 }
 let state = load() || fresh();
-let lastStatus = null; // budget colors before the last pick
-let ripple = null; // budgets the last pick moved (attempt 2+)
+let ripple = null; // budgets the last change moved (attempt 2+)
+let dragBefore = null; // margins when a slider drag started
 let anim = null; // running launch animation handle
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* private mode */ } };
 
@@ -60,34 +62,28 @@ const $app = document.getElementById('app');
 attachHover($app);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const R = Math.round;
-const dest = () => DESTINATIONS.find((d) => d.id === state.design.dest);
+const n1 = (x) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
+const contract = () => CONTRACTS.find((c) => c.id === state.design.contract);
+const dest = () => DESTINATIONS.find((x) => x.id === contract().dest);
 const key = () => FLOW[state.step];
 
 // First attempt: no budgets and no going back. Commit, launch, learn from the failure.
 const showBudgets = () => state.attempt > 1;
 const canGoBack = () => state.attempt > 1;
 
-// ---------- budget health row + graphs ----------
+// ---------- budget chips + graphs (attempt 2+) ----------
 function charts() { return isComplete(state.design) ? buildCharts(state.design, ESTIMATE) : null; }
 
-function healthRow(ch) {
-  if (!ch) return '';
-  const keys = CHART_ORDER.filter((k) => ch[k]);
-  return `<div class="health">${keys.map((k) => {
-    const s = ch[k].status;
-    const changed = lastStatus && lastStatus[k] && lastStatus[k] !== s;
-    return `<button class="hchip ${s} ${state.open.includes(k) ? 'open' : ''}" data-act="chart" data-k="${k}"><i class="dot"></i>${CHART_LABEL[k]}</button>`;
-  }).join('')}</div>`;
+function healthInner(ch) {
+  return CHART_ORDER.filter((k) => ch[k]).map((k) => `<button class="hchip ${ch[k].status} ${state.open.includes(k) ? 'open' : ''}" data-act="chart" data-k="${k}"><i class="dot"></i>${CHART_LABEL[k]}</button>`).join('');
 }
 
-function chartsSection(ch, keys, heading) {
-  if (!ch) return '';
-  const all = [...new Set([...keys, ...state.open])].filter((k) => ch[k]);
-  return `<section class="graphs"><h2>${heading}</h2><p class="note">Blue is your design. Orange is the limit. Tap a chip above to add a graph.</p>
-    <div class="chart-grid">${all.map((k) => renderChart(ch[k])).join('')}</div></section>`;
+function graphsInner(ch, screen) {
+  const all = [...new Set([...SCREEN_CHARTS[screen], ...state.open])].filter((k) => ch[k]);
+  return all.map((k) => renderChart(ch[k])).join('');
 }
 
-// ---------- coupling: what a choice feeds, and what the last pick moved ----------
+// ---------- coupling: what a choice feeds, and what the last change moved ----------
 // Margins past ±100% are "plenty" / "hopeless": clamp so only real shifts show up.
 const clampM = (m) => (typeof m === 'number' ? Math.max(-1, Math.min(1, m)) : m);
 const margins = () => { const ch = charts(); return ch ? Object.fromEntries(Object.entries(ch).map(([k, v]) => [k, clampM(v.margin)])) : null; };
@@ -102,69 +98,82 @@ function computeRipple(before, after) {
 
 function rippleHTML() {
   if (!showBudgets() || !ripple) return '';
-  if (!ripple.length) return '<div class="ripple"><b>That pick barely moved any budget.</b></div>';
-  return `<div class="ripple"><b>That pick moved:</b>${ripple.map((r) => `<span class="rchip ${r.to < 0.15 && r.to < r.from ? 'down' : r.from < 0.15 && r.to >= 0.15 ? 'up' : ''}">${CHART_LABEL[r.k]} <i>${fmtM(r.from)}</i> → <i>${fmtM(r.to)}</i></span>`).join('')}</div>
+  if (!ripple.length) return '<div class="ripple"><b>That change barely moved any budget.</b></div>';
+  return `<div class="ripple"><b>That change moved:</b>${ripple.map((r) => `<span class="rchip ${r.to < 0.15 && r.to < r.from ? 'down' : r.from < 0.15 && r.to >= 0.15 ? 'up' : ''}">${CHART_LABEL[r.k]} <i>${fmtM(r.from)}</i> → <i>${fmtM(r.to)}</i></span>`).join('')}</div>
     <p class="note">Margin left. Same choice, many budgets.</p>`;
 }
 
+// What each choice node in the coupling map says about your design.
 const partName = (c) => {
-  const v = state.design[c]; if (!v) return '';
-  if (c === 'traj') return v === 'assist' ? 'Assist' : 'Direct';
-  return SLOT[c].list.find((p) => p.id === v).name.replace(/\s*\(.*\)/, '');
+  const d = state.design; const P = parts(d);
+  if (c === 'contract') return P.payload ? P.payload.name : '';
+  if (c === 'traj') return d.traj === 'assist' ? 'Assist' : d.traj ? 'Direct' : '';
+  if (c === 'engine') return P.engine ? P.engine.name.replace(/\s*\(.*\)/, '') : '';
+  if (c === 'launcher') return P.launcher ? P.launcher.name : '';
+  return P[c].short;
 };
 
-// ---------- option cards ----------
-function statsFor(slotKey, p) {
+// ---------- option cards (engine, route, rocket) ----------
+function statsFor(stepKey, p) {
   const D = dest(); const d = state.design; const s = [];
   const add = (k, v) => s.push(`<span class="stat"><b>${v}</b> ${k}</span>`);
-  if (p.mass != null && slotKey !== 'launcher') add('kg', p.mass);
+  if (p.mass != null) add('kg', p.mass);
   if (p.cost != null) add('', `$${p.cost}M`);
-  switch (slotKey) {
-    case 'payload': add('W', p.powerW); add('Gbit/yr', p.genGb); break;
-    case 'power': {
-      const here = p.type === 'rtg' ? p.outW : R(p.outW * Math.min(1 / D.sunAU ** 2, D.solarCap));
-      add(`W at ${D.name}`, here); add('kWh battery', (p.batteryWh / 1000).toFixed(p.batteryWh < 10000 ? 1 : 0));
-      break;
-    }
-    case 'thermal': {
-      const heat = D.coldW * p.heaterFactor;
-      add('x sun max', p.hotLimit); add('krad shield', p.radTol); if (heat > 0) add('W heater here', R(heat));
-      break;
-    }
-    case 'comms': {
-      const down = (p.rateGb * D.contact) / (D.earthAU * D.earthAU);
-      add('W', p.powerW); add(`Gbit/yr from ${D.name}`, down >= 100 ? R(down) : down.toFixed(1));
-      break;
-    }
-    case 'engine': add('Isp (s)', p.isp); add('thrust', p.thrustN >= 400 ? 'High' : p.thrustN >= 50 ? 'Medium' : 'Tiny'); if (p.powerW) add('W to run', p.powerW); break;
-    case 'tank': add('kg fuel', p.prop); break;
-    case 'launcher': {
-      const tr = D.traj[d.traj || 'direct'];
-      add(`kg to ${D.name}${d.traj ? '' : ' (Direct)'}`, R(launchCapacity(p, tr.c3)));
-      break;
-    }
-    case 'traj': {
-      const tr = D.traj[p.id];
-      add('yr cruise', fmtYr(tr.cruise, true)); add('m/s burn', tr.dv);
-      add('launch energy', tr.c3 > 30 ? 'High' : tr.c3 > 10 ? 'Med' : 'Low');
-      add('ops cost', `$${R(D.opsCostPerYr * (tr.cruise + D.opsYears))}M`);
-      if (tr.flyby) add('', FLYBYS[tr.flyby].name);
-      break;
-    }
-    default: break;
+  if (stepKey === 'engine') { add('Isp (s)', p.isp); add('thrust', p.thrustN >= 400 ? 'High' : p.thrustN >= 50 ? 'Medium' : 'Tiny'); if (p.powerW) add('W to run', p.powerW); }
+  if (stepKey === 'launcher') add(`kg to ${D.name}`, R(launchCapacity(p, D.traj[d.traj || 'direct'].c3)));
+  if (stepKey === 'traj') {
+    const tr = D.traj[p.id];
+    add('yr trip', fmtYr(tr.cruise, true)); add('m/s burn', tr.dv);
+    add('launch energy', tr.c3 > 30 ? 'High' : tr.c3 > 10 ? 'Med' : 'Low');
+    add('ops cost', `$${R(D.opsCostPerYr * (tr.cruise + D.opsYears))}M`);
+    if (tr.flyby) add('', FLYBYS[tr.flyby].name);
   }
-  if (p.life != null && slotKey !== 'tank') add('yr life', p.life);
+  if (p.life != null) add('yr life', p.life);
   return s.join('');
 }
 
-function optionsHTML(slot) {
-  const D = dest(); const cur = state.design[slot.key];
-  const list = slot.key === 'traj' ? slot.list.map((t) => ({ ...t, name: t.id === 'assist' ? `Assist: ${D.traj.assist.label}` : 'Direct' })) : slot.list;
+function optionsHTML(step) {
+  const D = dest(); const cur = state.design[step.key];
+  const list = step.key === 'traj' ? step.list.map((t) => ({ ...t, name: t.id === 'assist' ? `Assist: ${D.traj.assist.label}` : 'Direct' })) : step.list;
   return `<div class="opts">${list.map((p) => `
-      <button class="opt ${cur === p.id ? 'sel' : ''}" data-act="pick" data-slot="${slot.key}" data-id="${p.id}">
+      <button class="opt ${cur === p.id ? 'sel' : ''}" data-act="pick" data-slot="${step.key}" data-id="${p.id}">
         <div class="opt-name">${esc(p.name)}</div><div class="opt-blurb">${esc(p.blurb)}</div>
-        <div class="stats">${statsFor(slot.key, p)}</div>
+        <div class="stats">${statsFor(step.key, p)}</div>
       </button>`).join('')}</div>`;
+}
+
+// ---------- sliders (power, thermal, antenna, fuel) ----------
+const fmtV = (v, p) => `${n1(v)}${p.unit ? ` ${p.unit}` : ''}`;
+
+function slidersHTML(step) {
+  const D = dest();
+  const keys = step.params.filter((k) => k !== 'battery' || D.nightHours);
+  return `<div class="sliders">${keys.map((k) => {
+    const p = PARAMS[k]; const v = paramVal(state.design, k);
+    return `<div class="slider"><div class="s-head"><label for="sl-${k}">${p.label}</label><output id="out-${k}" class="s-val">${fmtV(v, p)}</output></div>
+      <input id="sl-${k}" type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${v}" data-key="${k}">
+      <div class="s-scale"><span>${fmtV(p.min, p)}</span><span>${fmtV(p.max, p)}</span></div></div>`;
+  }).join('')}<div class="stats live" id="live">${liveStats(step.key)}</div></div>`;
+}
+
+// The part's own numbers as you size it: mass, cost, and what it does at this destination.
+function liveStats(k) {
+  const D = dest(); const P = parts(state.design); const s = [];
+  const add = (u, v) => s.push(`<span class="stat"><b>${v}</b> ${u}</span>`);
+  const part = P[k];
+  add('kg', R(part.mass)); add('', `$${R(part.cost)}M`);
+  if (k === 'power') {
+    const w = part.solarW * Math.min(1 / D.sunAU ** 2, D.solarCap) + part.rtgW;
+    add(`W at ${D.name}`, w >= 10 ? R(w) : w.toFixed(1));
+    if (D.nightHours) add('kWh battery', n1(part.batteryWh / 1000));
+  } else if (k === 'thermal') {
+    add('x sun max', n1(part.hotLimit)); add('krad shield', R(part.radTol));
+    const heat = D.coldW * part.heaterFactor; if (heat > 0) add('W heater here', R(heat));
+  } else if (k === 'comms') {
+    const down = (part.rateGb * D.contact) / (D.earthAU * D.earthAU);
+    add('W', part.powerW); add(`Gbit/yr from ${D.name}`, down >= 100 ? R(down) : down.toFixed(1));
+  } else if (k === 'tank') add('kg fuel', R(part.prop));
+  return s.join('');
 }
 
 // ---------- screens ----------
@@ -177,71 +186,93 @@ function header() {
   </header>`;
 }
 
-function nav(canNext, nextLabel = 'Next') {
+function canNext() {
+  const d = state.design; const k = key();
+  if (k === 'contract') return !!d.contract;
+  if (k === 'power') return paramVal(d, 'solarArea') > 0 || paramVal(d, 'rtgUnits') > 0;
+  if (k === 'traj' || k === 'engine' || k === 'launcher') return !!d[k];
+  return true;
+}
+
+function nav(canGo, nextLabel = 'Next') {
   const back = canGoBack() && state.step > 0;
   const lock = !canGoBack() && state.step > 0 ? '<span class="lock">No going back on the first attempt</span>' : '<span></span>';
   return `<nav class="bottom">
     ${back ? '<button class="btn ghost" data-act="back">Back</button>' : lock}
-    <button class="btn primary" data-act="next" ${canNext ? '' : 'disabled'}>${nextLabel}</button>
+    <button class="btn primary" data-act="next" ${canGo ? '' : 'disabled'}>${nextLabel}</button>
   </nav>`;
 }
 
 function debugBar() {
-  if (!DEBUG || key() === 'dest' || key() === 'review' || key() === 'launch') return '';
+  if (!DEBUG || !state.design.contract || key() === 'review' || key() === 'launch') return '';
   return `<div class="debugbar"><button class="btn small" data-act="dbg-random">Random design</button><button class="btn small" data-act="dbg-good">Cheapest full success</button><span>seed ${state.seed}</span></div>`;
 }
 
-function screenDest() {
-  const sel = state.design.dest;
-  const cards = DESTINATIONS.map((D) => `
-    <button class="dest ${sel === D.id ? 'sel' : ''}" data-act="dest" data-id="${D.id}">
+function screenContract() {
+  const sel = state.design.contract;
+  const cards = CONTRACTS.map((C) => {
+    const D = DESTINATIONS.find((x) => x.id === C.dest); const pay = PAYLOADS.find((x) => x.id === C.payload);
+    return `<button class="dest ${sel === C.id ? 'sel' : ''}" data-act="contract" data-id="${C.id}">
       <div class="dest-top"><span class="planet" style="--c:${D.color}"></span>
-        <div><div class="dest-name">${D.name}</div><div class="diff" role="img" aria-label="Difficulty ${D.difficulty} of 5">${[1, 2, 3, 4, 5].map((i) => `<i class="${i <= D.difficulty ? 'on' : ''}"></i>`).join('')}</div></div>
+        <div><div class="dest-name">${esc(C.name)}</div><div class="diff" role="img" aria-label="Difficulty ${D.difficulty} of 5">${[1, 2, 3, 4, 5].map((i) => `<i class="${i <= D.difficulty ? 'on' : ''}"></i>`).join('')}</div></div>
         <span class="mult">×${D.mult} score</span></div>
-      <div class="dest-goal">${esc(D.goal)}</div>
+      <div class="dest-goal">${esc(C.brief)}</div>
+      <div class="kv"><span>Instrument</span><b>${esc(pay.name)}</b></div>
+      <div class="kv"><span>Science goal</span><b>${C.goalGb} Gbit</b></div>
+      <div class="kv"><span>Arrive within</span><b>${fmtYr(C.deadline)}</b></div>
+      <div class="kv"><span>Funding</span><b>$${C.budget}M</b></div>
       <div class="hazard">${ICON.alert}<span>${esc(D.hazard.name)}</span></div>
-      ${showBudgets() ? `<div class="kv"><span>Budget</span><b>$${D.budget}M</b></div>` : ''}
-    </button>`).join('');
+    </button>`;
+  }).join('');
   const intro = state.attempt === 1
-    ? '<p class="lead">One choice per screen. No going back. Every choice ripples into the others.</p>'
-    : '<p class="lead">Harder targets score more</p>';
-  return `${header()}<main><h1>Where are we going?</h1>${intro}
+    ? '<p class="lead">Accept a contract. It fixes the target, the instrument, the deadline and the funding. One choice per screen after this, and no going back.</p>'
+    : '<p class="lead">Take the same contract again, or switch.</p>';
+  return `${header()}<main><h1>Contract board</h1>${intro}
     ${state.history.length ? historyHTML() : ''}<div class="dests">${cards}</div>
     <button class="link" data-act="reset">Start over (new team)</button></main>${nav(!!sel)}`;
 }
 
 function screenChoice(k) {
-  const slot = SLOT[k]; const D = dest();
+  const step = STEP[k]; const D = dest();
   const c = consideration(k, D, state.design);
   const ch = showBudgets() ? charts() : null;
-  const html = `${header()}${ch ? healthRow(ch) : ''}<main>${debugBar()}
+  return `${header()}${ch ? `<div class="health" id="health">${healthInner(ch)}</div>` : ''}<main>${debugBar()}
     <section class="consider">
-      <div class="eyebrow"><span class="role">${slot.role}</span></div>
+      <div class="eyebrow"><span class="role">${step.role}</span></div>
       <h1>${esc(c.title)}</h1>
       <p class="why">${esc(c.why)}</p>
       <ul class="here">${c.here.map((h) => `<li>${esc(h)}</li>`).join('')}</ul>
       <div class="feeds"><span>Ripples into</span>${COUPLING[k].map((b) => `<i>${BUDGET_LABEL[b]}</i>`).join('')}</div>
     </section>
-    ${optionsHTML(slot)}
-    ${rippleHTML()}
-    ${ch ? chartsSection(ch, SLOT_CHARTS[k], 'Your budgets') : ''}
-  </main>${nav(!!state.design[k])}`;
-  lastStatus = ch ? Object.fromEntries(Object.entries(ch).map(([kk, v]) => [kk, v.status])) : null;
-  return html;
+    ${step.params ? slidersHTML(step) : optionsHTML(step)}
+    <div id="rip">${rippleHTML()}</div>
+    ${ch ? `<section class="graphs"><h2>Your budgets</h2><p class="note">Blue is your design. Orange is the limit. Tap a chip above to add a graph.</p><div class="chart-grid" id="chart-grid">${graphsInner(ch, k)}</div></section>` : ''}
+  </main>${nav(canNext())}`;
+}
+
+// Slider moves update only the readouts and graphs, never the sliders themselves.
+function refreshDynamic() {
+  const k = key(); const step = STEP[k];
+  const ch = showBudgets() ? charts() : null;
+  resetCharts();
+  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  if (ch) { set('health', healthInner(ch)); set('chart-grid', graphsInner(ch, k)); }
+  if (step && step.params) set('live', liveStats(k));
+  set('rip', rippleHTML());
+  const next = document.querySelector('[data-act=next]'); if (next) next.disabled = !canNext();
 }
 
 function screenReview() {
   const d = state.design;
   if (!isComplete(d)) return `${header()}<main><h1>Design review</h1><p>Some parts are missing.</p></main>${nav(false)}`;
-  const b = budgets(d, ESTIMATE);
-  const picks = FLOW.filter((k) => SLOT[k]).map((k) => {
-    const p = SLOT[k].list.find((x) => x.id === d[k]);
-    const name = k === 'traj' ? (d.traj === 'assist' ? `Assist: ${b.D.traj.assist.label}` : 'Direct') : p.name;
-    return `<div class="kv"><span>${SLOT[k].label}</span><b>${esc(name)}</b></div>`;
-  }).join('');
+  const b = budgets(d, ESTIMATE); const C = b.C; const P = b.P;
+  const rows = [
+    ['Contract', C.name], ['Power', P.power.name], ['Thermal', P.thermal.name], ['Antenna', P.comms.name],
+    ['Route', d.traj === 'assist' ? `Assist: ${b.D.traj.assist.label}` : 'Direct'], ['Engine', P.engine.name], ['Fuel', P.tank.name], ['Rocket', P.launcher.name],
+  ].map(([a, v]) => `<div class="kv"><span>${a}</span><b>${esc(v)}</b></div>`).join('');
   if (!showBudgets()) {
-    return `${header()}<main><h1>Final design</h1><p class="lead">Flying to ${b.D.name}. Launch it and see what happens.</p>
-      <div class="costbox">${picks}</div>
+    return `${header()}<main><h1>Final design</h1><p class="lead">${esc(C.name)}. Launch it and see what happens.</p>
+      <div class="costbox">${rows}</div>
     </main>${nav(true, 'Launch')}`;
   }
   const ch = buildCharts(d, ESTIMATE);
@@ -251,13 +282,13 @@ function screenReview() {
   return `${header()}<main><h1>Design review</h1>
     <div class="summary">${reds ? `<b class="red-t">${reds} failing</b> · ` : ''}${yellows ? `<b class="yellow-t">${yellows} thin</b> · ` : ''}${!reds && !yellows ? '<b class="green-t">All clear</b> · ' : ''}Real hardware comes out heavier. Leave margin.</div>
     <div class="chart-grid">${keys.map((k) => renderChart(ch[k])).join('')}</div>
-    <details class="picks"><summary>Your parts</summary><div class="costbox">${picks}</div></details>
+    <details class="picks"><summary>Your design</summary><div class="costbox">${rows}</div></details>
     ${over ? `<div class="warn">Launch blocked: over budget by $${R(b.cost - b.budget)}M.</div>` : ''}
   </main>${nav(!over, 'Launch')}`;
 }
 
 function historyHTML() {
-  return `<div class="history"><b>Past attempts</b>${state.history.map((h) => `<div class="h-row"><span>#${h.attempt} ${esc(h.dest)}</span><span class="tier ${h.outcome}">${tierName(h.outcome)}</span><span>${h.score} pts</span><span class="code">${h.code}</span></div>`).join('')}</div>`;
+  return `<div class="history"><b>Past attempts</b>${state.history.map((h) => `<div class="h-row"><span>#${h.attempt} ${esc(h.name)}</span><span class="tier ${h.outcome}">${tierName(h.outcome)}</span><span>${h.score} pts</span><span class="code">${h.code}</span></div>`).join('')}</div>`;
 }
 const tierName = (o) => ({ none: 'No mission', min: 'Minimum', full: 'Full success' }[o]);
 
@@ -349,11 +380,11 @@ function startLaunch() {
 
 function showResult(res) {
   if (key() !== 'launch' || !document.getElementById('result')) return;
-  const d = state.design; const D = res.b.D;
+  const d = state.design; const D = res.b.D; const C = res.b.C;
   const code = teamCode(d, state.seed, state.attempt);
   const first = state.attempt === 1;
   if (!state.history.find((h) => h.attempt === state.attempt)) {
-    state.history.push({ attempt: state.attempt, dest: D.name, outcome: res.outcome, score: res.score, code, cost: R(res.cost) });
+    state.history.push({ attempt: state.attempt, name: C.name, outcome: res.outcome, score: res.score, code, cost: R(res.cost) });
     save();
   }
   const chains = explain(d, res);
@@ -374,7 +405,7 @@ function showResult(res) {
         <div><span>Cost</span><b>$${R(res.cost)}M</b></div>
         <div><span>Team code</span><b class="code">${code}</b></div>
       </div>
-      <div class="o-note">${res.points} science pts × ${D.mult} (${D.name})</div>
+      <div class="o-note">${res.points} science pts × ${D.mult} (${esc(C.name)})</div>
     </div>
     ${f ? `<section class="anomaly"><h2>Anomaly report</h2><p class="a-what">${esc(f.text)}</p>
       ${failChart}
@@ -388,13 +419,13 @@ function showResult(res) {
     ${historyHTML()}
     <div class="end-actions">
       <button class="btn primary" data-act="redesign">Redesign · Attempt ${state.attempt + 1}</button>
-      <button class="btn ghost" data-act="newdest">Change destination</button>
+      <button class="btn ghost" data-act="newcontract">Change contract</button>
     </div>`;
   if (!DEBUG) document.getElementById('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function closestCall(b) {
-  const opts = [['Mass', b.massMargin], ['Power', b.powerMargin], ['Delta-v', b.dvMargin], ['Data', b.dataMargin], ['Thermal', b.thermalMargin], ['Radiation', b.radMargin], ['Cost', b.costMargin], ['Design life', b.lifeMargin]];
+  const opts = [['Mass', b.massMargin], ['Power', b.powerMargin], ['Delta-v', b.dvMargin], ['Data', b.dataMargin], ['Thermal', b.thermalMargin], ['Radiation', b.radMargin], ['Cost', b.costMargin], ['Design life', b.lifeMargin], ['Schedule', b.timeMargin]];
   const m = opts.filter((x) => typeof x[1] === 'number').sort((a, c) => a[1] - c[1])[0];
   return m ? `${m[0]} margin ${R(m[1] * 100)}%` : null;
 }
@@ -405,7 +436,7 @@ function render() {
   resetCharts();
   const k = key();
   let html = '';
-  if (k === 'dest') html = screenDest();
+  if (k === 'contract') html = screenContract();
   else if (k === 'review') html = screenReview();
   else if (k === 'launch') html = screenLaunch();
   else html = screenChoice(k);
@@ -413,16 +444,21 @@ function render() {
   if (k === 'launch') startLaunch();
 }
 
-function go(n) { state.step = n; lastStatus = null; ripple = null; save(); render(); window.scrollTo(0, 0); }
+function go(n) { state.step = n; ripple = null; dragBefore = null; save(); render(); window.scrollTo(0, 0); }
 const stepOf = (k) => FLOW.indexOf(k);
 
 function autoPick(mode) {
-  const D = dest(); if (!D) return;
+  if (!state.design.contract) return;
   if (mode === 'good') {
-    const best = cheapestFull(D.id); if (best) state.design = { ...best.d };
+    const best = cheapestFull(state.design.contract); if (best) state.design = { ...best.d };
   } else {
     const rng = mulberry32(Date.now() & 0xffffffff);
-    for (const s of SLOTS) state.design[s.key] = s.list[Math.floor(rng() * s.list.length)].id;
+    for (const [k, p] of Object.entries(PARAMS)) {
+      const steps = Math.round((p.max - p.min) / p.step);
+      state.design[k] = +(p.min + Math.floor(rng() * (steps + 1)) * p.step).toFixed(2);
+    }
+    if (!state.design.solarArea && !state.design.rtgUnits) state.design.solarArea = 8;
+    for (const s of STEPS) if (s.list) state.design[s.key] = s.list[Math.floor(rng() * s.list.length)].id;
   }
   save(); render();
 }
@@ -431,8 +467,8 @@ $app.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]'); if (!el) return;
   const act = el.dataset.act;
   const keepScroll = () => { const y = window.scrollY; render(); window.scrollTo(0, y); };
-  if (act === 'dest') {
-    state.design.dest = el.dataset.id; save(); render();
+  if (act === 'contract') {
+    state.design.contract = el.dataset.id; save(); render();
   } else if (act === 'pick') {
     const before = showBudgets() ? margins() : null;
     state.design[el.dataset.slot] = el.dataset.id;
@@ -441,21 +477,36 @@ $app.addEventListener('click', (e) => {
   } else if (act === 'chart') {
     const k = el.dataset.k;
     state.open = state.open.includes(k) ? state.open.filter((x) => x !== k) : [...state.open, k];
-    lastStatus = null; save(); keepScroll();
+    save(); keepScroll();
   } else if (act === 'next') {
-    if (key() === 'dest' && DEBUG && !SLOTS.some((s) => state.design[s.key])) autoPick('random');
+    if (key() === 'contract' && DEBUG && !state.design.engine) autoPick('random');
     go(Math.min(FLOW.length - 1, state.step + 1));
   } else if (act === 'back') { if (canGoBack()) go(Math.max(0, state.step - 1)); }
-  else if (act === 'redesign') { state.attempt += 1; go(stepOf('payload')); }
-  else if (act === 'newdest') { state.attempt += 1; go(stepOf('dest')); }
+  else if (act === 'redesign') { state.attempt += 1; go(stepOf('power')); }
+  else if (act === 'newcontract') { state.attempt += 1; go(stepOf('contract')); }
   else if (act === 'reset') {
     if (confirm('Start over as a new team? This clears all attempts.')) { state = fresh(); save(); render(); }
   } else if (act === 'dbg-random') autoPick('random');
   else if (act === 'dbg-good') autoPick('good');
 });
 
+// Sliders: update the design and the readouts live, and show what moved when you let go.
+$app.addEventListener('input', (e) => {
+  const el = e.target; if (!el.matches || !el.matches('input[type=range][data-key]')) return;
+  const k = el.dataset.key;
+  if (dragBefore === null && showBudgets()) dragBefore = margins();
+  state.design[k] = parseFloat(el.value);
+  const out = document.getElementById(`out-${k}`); if (out) out.textContent = fmtV(state.design[k], PARAMS[k]);
+  save(); refreshDynamic();
+});
+$app.addEventListener('change', (e) => {
+  const el = e.target; if (!el.matches || !el.matches('input[type=range][data-key]')) return;
+  if (dragBefore) { ripple = computeRipple(dragBefore, margins()); refreshDynamic(); }
+  dragBefore = null;
+});
+
 // If the page was reloaded mid-launch, replay the launch for this attempt.
 render();
 
 // Expose for quick console checks.
-if (DEBUG) window.__md = { state: () => state, budgets, simulate, allDesigns, buildCharts, LAUNCHERS };
+if (DEBUG) window.__md = { state: () => state, budgets, simulate, buildCharts };

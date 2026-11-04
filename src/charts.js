@@ -15,7 +15,7 @@ const BLUE = '#3f8fe6';
 const ORANGE = '#c0802a';
 const R = Math.round;
 
-export const CHART_ORDER = ['power', 'thermal', 'rad', 'data', 'cost', 'mass', 'dv', 'life', 'night'];
+export const CHART_ORDER = ['power', 'thermal', 'rad', 'data', 'time', 'cost', 'mass', 'dv', 'life', 'night'];
 export const CHART_LABEL = { ...BUDGET_LABEL, night: 'Night battery' };
 
 // Which graph explains each failure mode.
@@ -23,6 +23,7 @@ export function chartForFailure(f, b) {
   if (!f) return null;
   if (f.mode === 'insertion') return f.ion ? 'power' : 'dv';
   if (f.mode === 'flyby') return b.tr.flyby === 'venus' ? 'thermal' : 'rad';
+  if (f.mode === 'deadline') return 'time';
   return {
     cost: 'cost', launcher: 'mass', brownout: 'power', freeze: 'power', storm: 'power', overheat: 'thermal',
     radiation: 'rad', life: 'life', night: 'night', data: 'data',
@@ -46,6 +47,9 @@ function judge(margin, text, fail) {
   const verdict = status === 'red' ? text.bad(fail) : status === 'yellow' ? text.thin : text.ok;
   return { status, margin, verdict };
 }
+
+const LIFE_NAME = { power: 'Power system', thermal: 'Thermal system', comms: 'Antenna' };
+const lifeLabel = (c, P) => LIFE_NAME[c.key] || c.part.name;
 
 // failure: the launch's first failure (result screen). Lines stop where the spacecraft died.
 export function buildCharts(d, opts = ESTIMATE, failure = null) {
@@ -87,9 +91,9 @@ export function buildCharts(d, opts = ESTIMATE, failure = null) {
     out.thermal = {
       ...base, key: 'thermal', title: 'Heat', unit: 'x sun', fmt: (v) => `${v < 0.1 ? v.toFixed(3) : v.toFixed(1)}x sun`,
       series: [have(pts)],
-      limits: [{ y: b.hotLimit, label: `${P.thermal.name} limit`, dir: 'above' }],
+      limits: [{ y: b.hotLimit, label: 'Radiator limit', dir: 'above' }],
       fail, ...judge(minM(b.thermalMargin, tr.flyby === 'venus' ? b.flybyMargin : null), { ok: 'Stays cool enough', thin: 'Close to overheating', bad: (f) => `Overheats ${when(f ? f.t : cruise)}` }, fail),
-      note: P.power.type === 'rtg' ? 'Includes RTG waste heat. 1x = sunlight at Earth.' : '1x = sunlight at Earth.',
+      note: P.power.hasRtg ? 'Includes RTG waste heat. 1x = sunlight at Earth.' : '1x = sunlight at Earth.',
     };
   }
 
@@ -101,7 +105,7 @@ export function buildCharts(d, opts = ESTIMATE, failure = null) {
     out.rad = {
       ...base, key: 'rad', title: 'Radiation', unit: 'krad', fmt: (v) => `${R(v)} krad`,
       series: [{ ...have(pts), name: 'Dose so far' }],
-      limits: [{ y: b.radTol, label: `${P.thermal.name} limit`, dir: 'above' }],
+      limits: [{ y: b.radTol, label: 'Shielding limit', dir: 'above' }],
       fail, ...judge(minM(b.radMargin, tr.flyby === 'jupiter' ? b.flybyMargin : null), { ok: 'Electronics survive', thin: 'Close to the radiation limit', bad: (f) => `Electronics fail ${when(f ? f.t : cruise)}` }, fail),
       note: `${D.cruiseDosePerYr} krad/yr on the trip, ${D.opsDosePerYr} at ${D.name}${tr.flyby ? `, plus the ${tr.flyby === 'jupiter' ? 'Jupiter' : 'Venus'} flyby` : ''}`,
     };
@@ -111,16 +115,23 @@ export function buildCharts(d, opts = ESTIMATE, failure = null) {
   {
     const rate = Math.min(b.genPerYr, b.downPerYr);
     const sent = sample((t) => rate * Math.max(0, t - cruise), cruise, Math.max(stop, cruise + 1e-3), [], 60);
-    const pctGoal = R((100 * b.returnable) / D.fullGb);
-    const fail = b.returnable < D.fullGb && stop === end ? { t: end, y: rate * D.opsYears, label: `${pctGoal}% of goal` } : null;
+    const pctGoal = R((100 * b.returnable) / b.goalGb);
+    const fail = b.returnable < b.goalGb && stop === end ? { t: end, y: rate * D.opsYears, label: `${pctGoal}% of goal` } : null;
     out.data = {
-      ...base, xMin: cruise, cruise: 0, xLabel: `years at ${D.name}`, key: 'data', title: 'Data', unit: 'Gbit', fmt: (v) => fmtGb(v), yMax: Math.max(D.fullGb, rate * D.opsYears) * 1.35,
+      ...base, xMin: cruise, cruise: 0, xLabel: `years at ${D.name}`, key: 'data', title: 'Data', unit: 'Gbit', fmt: (v) => fmtGb(v), yMax: Math.max(b.goalGb, rate * D.opsYears) * 1.35,
       series: [{ ...have(sent), name: 'Sent home' }],
-      limits: [{ y: D.fullGb, label: `Goal: ${D.fullGb} Gbit` }],
+      limits: [{ y: b.goalGb, label: `Goal: ${b.goalGb} Gbit` }],
       fail, ...judge(b.dataMargin, { ok: 'Hits the data goal', thin: 'Barely hits the data goal', bad: () => `Only ${pctGoal}% of the goal` }, fail),
       note: `Mission makes ${fmtGb(b.genPerYr)}/yr. Antenna sends ${fmtGb(b.downPerYr)}/yr.`,
     };
   }
+
+  // Schedule: when you arrive vs the contract deadline.
+  out.time = {
+    ...base, key: 'time', kind: 'timeline', title: 'Schedule', deadline: b.deadline,
+    ...judge(b.timeMargin, { ok: 'Arrives before the deadline', thin: 'Arrives just before the deadline', bad: () => `Arrives ${fmtYr(cruise - b.deadline)} too late` }, null),
+    note: `${fmtYr(cruise)} trip. Contract deadline: ${fmtYr(b.deadline)}.`,
+  };
 
   // Cost: money spent so far vs budget.
   {
@@ -172,8 +183,8 @@ export function buildCharts(d, opts = ESTIMATE, failure = null) {
   // Part life: how long each part lasts vs how long it must work.
   out.life = {
     ...base, key: 'life', kind: 'bars', title: 'Part life', unit: 'yr',
-    rows: b.lifeChecks.map((c) => ({ name: c.part.name.replace(/\s*\(.*\)/, ''), life: c.part.life, need: c.need })),
-    ...judge(b.lifeMargin, { ok: 'Every part lasts', thin: 'A part is close to wearing out', bad: () => `${b.weakest.part.name.replace(/\s*\(.*\)/, '')} wears out` }, null),
+    rows: b.lifeChecks.map((c) => ({ name: lifeLabel(c, P), life: c.part.life, need: c.need })),
+    ...judge(b.lifeMargin, { ok: 'Every part lasts', thin: 'A part is close to wearing out', bad: () => `${lifeLabel(b.weakest, P)} wears out` }, null),
     note: 'Bar = how long the part lasts. Line = how long it must work.',
   };
 
@@ -210,7 +221,7 @@ const tickFmt = (v) => (Math.abs(v) >= 10000 ? `${R(v / 1000)}k` : Math.abs(v) >
 
 export function renderChart(spec) {
   if (!spec) return '';
-  const body = spec.kind === 'bars' ? barsSVG(spec) : lineSVG(spec);
+  const body = spec.kind === 'bars' ? barsSVG(spec) : spec.kind === 'timeline' ? timelineSVG(spec) : lineSVG(spec);
   const shown = (spec.series || []).filter((s) => !s.aux);
   const legend = shown.length > 1
     ? `<div class="legend">${shown.map((s) => `<span><i class="${s.dash ? 'dash' : ''}" style="--c:${s.color}"></i>${s.name}</span>`).join('')}</div>` : '';
@@ -268,7 +279,8 @@ function lineSVG(spec) {
   // limit labels sit above their line (below if there is no room)
   for (const l of spec.limits || []) {
     const above = y(l.y) - T > 16;
-    g.push(`<text x="${L + 6}" y="${above ? y(l.y) - 6 : y(l.y) + 16}" class="limlbl">${l.label}</text>`);
+    const failLeft = spec.fail && x(spec.fail.t) < L + pw * 0.5; // keep the limit label clear of the failure label
+    g.push(`<text x="${failLeft ? L + pw - 6 : L + 6}" y="${above ? y(l.y) - 6 : y(l.y) + 16}" class="limlbl" text-anchor="${failLeft ? 'end' : 'start'}">${l.label}</text>`);
   }
   if (spec.fail) {
     const fx = x(spec.fail.t); const fy = Math.max(T + 4, Math.min(baseY - 4, y(spec.fail.y)));
@@ -301,6 +313,22 @@ function barsSVG(spec) {
   const by = top + rows.length * rowH;
   g.push(`<line x1="${x(end)}" x2="${x(end)}" y1="${top - 2}" y2="${by}" class="limit"/>`);
   g.push(`<text x="${x(end)}" y="${by + 16}" class="limlbl" text-anchor="middle">mission ends</text>`);
+  return `<div class="plot"><svg viewBox="0 0 ${W} ${h}" role="img" aria-label="${spec.verdict}">${g.join('')}</svg></div>`;
+}
+
+function timelineSVG(spec) {
+  const { cruise, deadline } = spec; const h = 92; const L0 = 14; const pw = W - L0 - 20;
+  const xMax = niceMax(Math.max(cruise, deadline) * 1.2);
+  const x = (t) => L0 + (pw * Math.min(t, xMax)) / xMax;
+  const g = [];
+  const late = cruise > deadline;
+  g.push(`<rect x="${L0}" y="40" width="${Math.max(3, x(late ? deadline : cruise) - L0)}" height="18" rx="3" style="fill:${BLUE}"/>`);
+  if (late) g.push(`<rect x="${x(deadline)}" y="40" width="${x(cruise) - x(deadline)}" height="18" rx="3" style="fill:var(--red)"/>`);
+  g.push(`<line x1="${x(deadline)}" x2="${x(deadline)}" y1="30" y2="68" class="needline"/>`);
+  g.push(`<text x="${x(deadline)}" y="22" class="limlbl" text-anchor="${x(deadline) > W * 0.6 ? 'end' : 'start'}">Deadline: ${fmtYr(deadline)}</text>`);
+  g.push(`<line x1="${L0}" x2="${L0 + pw}" y1="68" y2="68" class="axis"/>`);
+  g.push(`<text x="${L0}" y="84" class="xtick" text-anchor="start">launch</text>`);
+  g.push(`<text x="${x(cruise)}" y="84" class="${late ? 'faillbl' : 'xtick'}" text-anchor="${x(cruise) > W - 70 ? 'end' : 'middle'}">arrive ${fmtYr(cruise)}</text>`);
   return `<div class="plot"><svg viewBox="0 0 ${W} ${h}" role="img" aria-label="${spec.verdict}">${g.join('')}</svg></div>`;
 }
 

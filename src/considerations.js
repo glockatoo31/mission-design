@@ -1,6 +1,6 @@
-// The short intro at the top of each choice screen: one line of why, a couple of
-// facts for the chosen destination. Kept deliberately small.
-import { FLYBYS, ENGINES, PAYLOADS } from './data.js';
+// The short intro at the top of each design screen: one line of why, a couple of
+// facts for the chosen contract. Kept deliberately small.
+import { FLYBYS, ENGINES, PAYLOADS, CONTRACTS } from './data.js';
 import { fmtYr } from './model.js';
 
 const rawSun = (D) => 1 / (D.sunAU * D.sunAU);
@@ -8,22 +8,17 @@ const pct = (x) => (x >= 0.1 ? `${Math.round(x * 100)}%` : x >= 0.01 ? `${(x * 1
 const energy = (c3) => (c3 > 30 ? 'high' : c3 > 10 ? 'medium' : 'low');
 
 export function consideration(slot, D, d) {
+  const C = CONTRACTS.find((x) => x.id === d.contract);
   const f = BUILDERS[slot];
-  const c = f(D, d, d.traj ? D.traj[d.traj] : null);
+  const c = f(D, d, d.traj ? D.traj[d.traj] : null, C);
   c.here = c.here.filter(Boolean).map((h) => h.replace(/\.$/, ''));
   return c;
 }
 
 const BUILDERS = {
-  payload: (D) => ({
-    title: 'What is the mission?',
-    why: 'The science goal picks the instrument. The instrument decides what everything else must carry.',
-    here: [`Goal: ${D.fullGoal}`, `${fmtYr(D.opsYears)} of operations at ${D.name}.`],
-  }),
-
   power: (D) => ({
     title: `Power at ${D.name}`,
-    why: 'Sunlight fades with distance squared. An RTG works anywhere, but is heavy and warm.',
+    why: 'Array output grows with area and fades with distance squared. RTGs work anywhere, but are heavy and warm.',
     here: [
       rawSun(D) > 1.2 ? `Sunlight is ${rawSun(D).toFixed(1)}x Earth's. Arrays use ${D.solarCap}x.`
         : D.sunAU === 1 ? 'Sunlight is the same as at Earth, until night.'
@@ -35,7 +30,7 @@ const BUILDERS = {
 
   thermal: (D, d) => ({
     title: `Heat and radiation at ${D.name}`,
-    why: 'One enclosure handles heat, cold, and radiation. Heaters cost power.',
+    why: 'Radiators shed heat. Shielding blocks radiation and insulates. Both add mass, and heaters cost power.',
     here: [
       {
         mercury: `The Sun is ${D.hotFlux}x Earth's.`,
@@ -46,24 +41,28 @@ const BUILDERS = {
       }[D.id],
       D.traj.assist.flyby === 'venus' ? `Assist route passes Venus (${FLYBYS.venus.flux}x sun).`
         : D.traj.assist.flyby === 'jupiter' ? `Assist route passes Jupiter (+${FLYBYS.jupiter.dose} krad).` : null,
-      d.power === 'rtg' ? 'Your RTG adds waste heat: warm in the cold, bad in the heat.' : null,
+      d.rtgUnits > 0 ? 'Your RTGs add waste heat: warm in the cold, bad in the heat.' : null,
     ],
   }),
 
-  comms: (D, d) => ({
-    title: `Talking to Earth from ${D.name}`,
-    why: 'Science only counts once it reaches Earth. Signals fade with distance squared.',
-    here: [
-      `${D.name} is ${D.earthAU} AU from Earth.`,
-      d.payload ? `Your mission makes ${PAYLOADS.find((x) => x.id === d.payload).genGb} Gbit per year.` : null,
-    ],
-  }),
+  comms: (D, d, tr, C) => {
+    const pay = C ? PAYLOADS.find((x) => x.id === C.payload) : null;
+    return {
+      title: `Talking to Earth from ${D.name}`,
+      why: 'Science only counts once it reaches Earth. Data rate grows with dish area and transmitter power, and fades with distance squared.',
+      here: [
+        `${D.name} is ${D.earthAU} AU from Earth.`,
+        pay ? `Your ${pay.name.toLowerCase()} makes ${pay.genGb} Gbit per year. Goal: ${C.goalGb} Gbit.` : null,
+      ],
+    };
+  },
 
-  traj: (D) => ({
+  traj: (D, d, tr, C) => ({
     title: `Route to ${D.name}`,
     why: 'Direct needs a big rocket. Assist borrows speed from planets: smaller rocket, longer trip.',
     here: [
       `Direct: ${fmtYr(D.traj.direct.cruise)} trip. Assist: ${fmtYr(D.traj.assist.cruise)} trip.`,
+      C ? `Contract deadline: arrive within ${fmtYr(C.deadline)}.` : null,
       `Every year costs $${D.opsCostPerYr}M in operations.`,
     ],
   }),

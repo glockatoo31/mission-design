@@ -120,6 +120,18 @@ Combine them: `?seed=7&demo` (add `&debug` to rehearse).
 
 Funding is set from each contract's `par` cost in `src/data.js` (the cheapest full success the solver finds), so par keeps about 12% cost margin. If you change any number, rerun `npm run balance`: it fails if `par` is stale, if any design can get every bar green, or if the best winning design isn't 5-14% thin.
 
+## The systems-engineering loop
+
+1. **Contract** → **Requirements**: the contract becomes seven numbered requirements (R1 data, R2 schedule, R3 funding, R4 the destination's hazard, R5 lift, R6 arrival burn, R7 stay powered/cool/alive), each with an owner and the choices that satisfy it.
+2. **Allocation** (Flight Director): split the funding between Power & Thermal, Comms, Propulsion & Trajectory and Launch, and set the power each load may draw (heaters, transmitter, ion engine). What isn't allocated is reserve, and at least 5% of the cap must be held back. The power system must then be sized to cover bus + instrument + every allocated load.
+3. **Design** (pass the phone): each lead sees their own allocation. From attempt 2 they also see used vs allocated.
+4. **Review** (attempt 2+): a requirements verification matrix, then allocation compliance. An owner over their allocation needs a **change request**: cost requests draw on the reserve, power requests raise the load the power system must cover. Launch is blocked until every owner is inside their allocation and the power system covers the allocated loads. The full budget graphs sit behind "All budget graphs".
+5. **Anomaly report**: names the requirement that failed, its owner, and any allocation overruns.
+
+Attempt 1 stays blind and unblocked (the bailout still applies), so every team fails once and then sees the whole process.
+
+`npm run balance` checks that the cheapest winner of every contract fits inside its own fitted allocation with reserve intact, that the naive even split does not, and that the default split keeps the minimum reserve. Allocations do not change the physics: they are accountability, not extra failure modes.
+
 ## How the model works (short)
 
 - **Parts are formulas.** Each slider sets a size and the formulas in `src/data.js` return mass, cost and performance (for example array area × 150 W/m² at Earth, dish area × transmitter power for data rate).

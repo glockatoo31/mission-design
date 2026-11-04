@@ -3,6 +3,7 @@
 // Run: npm run balance   (add --seeds to also sweep launch conditions for seeds 1..20)
 import { CONTRACTS, DESTINATIONS, PARAMS, ENGINES, LAUNCHERS } from '../src/data.js';
 import { simulate, designGrid, NOMINAL, ESTIMATE, launchConditions, budgets, budgetMargins } from '../src/model.js';
+import { defaultAlloc, fitAlloc, compliance } from '../src/syseng.js';
 
 const sweepSeeds = process.argv.includes('--seeds');
 const pct = (n, d) => `${((100 * n) / d).toFixed(1)}%`;
@@ -51,6 +52,14 @@ for (const C of CONTRACTS) {
     console.log(`Cheapest full success: $${Math.round(best.r.cost)}M of $${C.budget}M`);
     console.log('  ' + JSON.stringify(best.d));
     check(C.par === Math.round(best.r.cost), `${C.name}: par cost in data.js ($${C.par}M) matches the solver ($${Math.round(best.r.cost)}M)`);
+    // Systems engineering: a winner can be run inside its own allocations with reserve intact,
+    // and the naive default split does not fit it (so teams really have to allocate).
+    const fit = { ...best.d, alloc: fitAlloc(best.d), cr: {} };
+    const cf = compliance(fit);
+    check(cf.ok && cf.reserve >= cf.minReserve, `${C.name}: cheapest winner fits its fitted allocation (reserve ${Math.round(cf.reserve)}M, min ${cf.minReserve}M)`);
+    check(!compliance({ ...best.d, alloc: defaultAlloc(C), cr: {} }).ok, `${C.name}: the naive even allocation does not fit the cheapest winner`);
+    const dres = compliance({ ...best.d, alloc: defaultAlloc(C), cr: {} }).reserve;
+    check(dres >= cf.minReserve, `${C.name}: default allocation leaves the minimum reserve ($${Math.round(dres)}M >= $${cf.minReserve}M)`);
   } else check(false, `${C.name}: has a full-success design`);
 
   // The bars show nominal margins (no mass growth, no event). Nobody should be able to make every

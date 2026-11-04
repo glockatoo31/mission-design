@@ -6,6 +6,10 @@ import {
   budgets, budgetMargins, parts, simulate, explain, launchConditions, teamCode, ESTIMATE, paramVal,
   isComplete, cheapestFull, mulberry32, launchCapacity, fmtYr, fmtGb,
 } from './model.js';
+import {
+  SUBS, SUB_LABEL, POWER_USERS, MIN_RESERVE, COST_STEP, POWER_STEP, fixedCost, fixedPower, costPool, defaultAlloc, fitAlloc,
+  costReserve, powerRequired, compliance, requirements, reqFor,
+} from './syseng.js';
 import { consideration } from './considerations.js';
 import {
   buildCharts, renderChart, resetCharts, attachHover, chartForFailure, CHART_ORDER, CHART_LABEL,
@@ -21,13 +25,16 @@ const DEBUG = query.has('debug');
 // ?demo: three contracts, three different traps (deadline + battery, dust storm + mass, radiation + power).
 const DEMO_IDS = query.has('demo') ? ['lunar-survey', 'mars-survey', 'europa-spec'] : null;
 const URL_SEED = query.has('seed') ? Math.abs(parseInt(query.get('seed'), 10)) || 1 : null;
-const STORE = 'mission-design-v3';
+const STORE = 'mission-design-v4';
 
-// Contract first, then the spacecraft bus, then the route and propulsion (both depend
-// on the target), then the rocket, which is picked last with the bus mass locked in.
-const FLOW = ['contract', ...STEPS.map((s) => s.key), 'review', 'launch'];
+// Contract, then its requirements, then the Flight Director allocates the budgets. Each lead
+// designs inside their allocation: the bus, then route and propulsion (both depend on the
+// target), then the rocket, which is picked last with the bus mass locked in.
+const FLOW = ['contract', 'reqs', 'alloc', ...STEPS.map((s) => s.key), 'review', 'launch'];
 const STEP = Object.fromEntries(STEPS.map((s) => [s.key, s]));
-const STEP_NAME = { contract: 'Contract', review: 'Review', launch: 'Launch' };
+const STEP_NAME = { contract: 'Contract', reqs: 'Requirements', alloc: 'Allocation', review: 'Review', launch: 'Launch' };
+// Which allocation each design screen draws on.
+const OWNER = { power: 'pt', thermal: 'pt', comms: 'comms', traj: 'prop', engine: 'prop', tank: 'prop', launcher: 'launch' };
 const stepName = (k) => STEP_NAME[k] || STEP[k].label;
 
 // Silos: each screen shows only the budgets it governs (plus total cost and mass).
@@ -45,7 +52,7 @@ const ROLE = {
 const roleBadge = (k) => (ROLE[k] ? `Pass phone → ${ROLE[k]}` : 'Role: Flight Director');
 
 const blank = () => ({
-  contract: null, engine: null, traj: null, launcher: null,
+  contract: null, engine: null, traj: null, launcher: null, alloc: null, cr: {},
   ...Object.fromEntries(Object.entries(PARAMS).map(([k, p]) => [k, p.def])),
 });
 const fresh = () => ({ step: 0, design: blank(), attempt: 1, seed: URL_SEED ?? 1000 + Math.floor(Math.random() * 9000), history: [] });
@@ -191,6 +198,7 @@ function header() {
 function canNext() {
   const d = state.design; const k = key();
   if (k === 'contract') return !!d.contract;
+  if (k === 'alloc') return costReserve(d, contract()) >= minReserve();
   if (k === 'power') return paramVal(d, 'solarArea') > 0 || paramVal(d, 'rtgUnits') > 0;
   if (k === 'traj' || k === 'engine' || k === 'launcher') return !!d[k];
   return true;
@@ -234,6 +242,63 @@ function screenContract() {
     <button class="link" data-act="reset">Start over (new team)</button></main>${nav(!!sel)}`;
 }
 
+// ---------- requirements and allocation (Flight Director) ----------
+const f$ = (v) => `$${R(v)}M`;
+const fW = (v) => `${R(v)} W`;
+const fPct = (m) => (typeof m === 'number' ? `${m < 0 ? '−' : '+'}${Math.min(999, Math.abs(R(m * 100)))}%` : '–');
+const minReserve = () => Math.ceil(MIN_RESERVE * contract().budget);
+
+function screenReqs() {
+  const rows = requirements(state.design);
+  return `${header()}<main><h1>Requirements</h1>
+    <p class="lead">The contract, as testable requirements. Each has an owner and a trace to the choices that satisfy it. At Review you verify every one.</p>
+    <div class="reqs">${rows.map((r) => `<div class="req"><b class="rid">${r.id}</b><div><div class="rtext">${esc(r.text)}</div><div class="rmeta">Owner: ${r.owner}</div><div class="rmeta">Satisfied by: ${r.by}</div></div></div>`).join('')}</div>
+  </main>${nav(true)}`;
+}
+
+function allocSlider(kind, id, label, max, step, fmt) {
+  const v = state.design.alloc[kind][id];
+  return `<div class="slider"><div class="s-head"><label for="al-${kind}-${id}">${label}</label><output id="ao-${kind}-${id}" class="s-val">${fmt(v)}</output></div>
+    <input id="al-${kind}-${id}" type="range" min="0" max="${max}" step="${step}" value="${v}" data-alloc="${kind}.${id}"></div>`;
+}
+
+function allocSummary() {
+  const d = state.design; const C = contract();
+  const alloc = SUBS.reduce((s, x) => s + d.alloc.cost[x.id], 0); const res = costReserve(d, C); const min = minReserve();
+  return `<div class="costbox"><div class="kv"><span>Funding cap</span><b>${f$(C.budget)}</b></div>
+    <div class="kv"><span>Fixed: bus + instrument</span><b>${f$(fixedCost(C))}</b></div>
+    <div class="kv"><span>Allocated to the four owners</span><b>${f$(alloc)}</b></div>
+    <div class="kv total"><span>Reserve (keep at least ${f$(min)})</span><b class="${res < min ? 'red-t' : ''}">${f$(res)}</b></div>
+    <div class="kv"><span>Power system must supply</span><b>${fW(powerRequired(d, C))}</b></div></div>
+    ${res < min ? `<div class="warn">Hold back at least ${f$(min)} as reserve. It pays for change requests later.</div>` : ''}`;
+}
+
+function screenAlloc() {
+  const C = contract(); const max = Math.floor(costPool(C) / COST_STEP) * COST_STEP;
+  return `${header()}<main><h1>Allocate the budgets</h1>
+    <p class="lead">Flight Director: split cost between the four owners, and the power each may draw. What you do not allocate is reserve. Each lead then designs inside their share, and the power system is sized to cover every allocated load.</p>
+    <section class="slot"><h2>Cost</h2><div class="sliders">${SUBS.map((s) => allocSlider('cost', s.id, s.label, max, COST_STEP, f$)).join('')}</div></section>
+    <section class="slot"><h2>Power draw</h2><div class="sliders">${POWER_USERS.map((id) => allocSlider('power', id, { pt: 'Heaters (Power & Thermal)', comms: 'Transmitter (Comms)', prop: 'Ion engine (Propulsion)' }[id], 400, POWER_STEP, fW)).join('')}</div>
+      <p class="note">Bus and instrument draw ${fW(fixedPower(C))} on top of this.</p></section>
+    <div id="alloc-sum">${allocSummary()}</div>
+  </main>${nav(canNext())}`;
+}
+
+// "Your allocation" panel on each design screen. Attempt 1 shows the numbers only;
+// attempt 2+ adds used vs allocated bars.
+function allocPanel(k) {
+  const d = state.design; const sub = OWNER[k]; if (!d.alloc) return '';
+  const cf = compliance(d); const live = showBudgets();
+  const row = (label, r, fmt) => {
+    if (!r) return '';
+    const pct = Math.min(100, r.alloc > 0 ? (100 * r.used) / r.alloc : r.used > 0 ? 100 : 0);
+    return `<div class="a-row ${live && r.over ? 'over' : ''}"><div class="kv"><span>${label}</span><b>${live ? `${fmt(r.used)} of ${fmt(r.alloc)}` : `${fmt(r.alloc)} allocated`}</b></div>
+      ${live ? `<i class="a-bar"><u style="width:${pct}%"></u></i>` : ''}${live && r.over ? `<small>Over by ${fmt(r.over)}. Needs a change request at Review, or cut.</small>` : ''}</div>`;
+  };
+  const supply = k === 'power' ? `<div class="a-row ${live && cf.short ? 'over' : ''}"><div class="kv"><span>Supply must cover</span><b>${fW(cf.required)}${live ? ` · yours ${fW(cf.supply)}` : ''}</b></div>${live && cf.short ? '<small>Short. Add arrays or RTG, or ask for lower allocations.</small>' : ''}</div>` : '';
+  return `<h2>${SUB_LABEL[sub]}: your allocation</h2>${row('Cost', cf.rows.find((r) => r.key === `cost.${sub}`), f$)}${row('Power draw', cf.rows.find((r) => r.key === `power.${sub}`), fW)}${supply}`;
+}
+
 function screenChoice(k) {
   const step = STEP[k]; const D = dest();
   const c = consideration(k, D, state.design);
@@ -246,6 +311,7 @@ function screenChoice(k) {
       <ul class="here">${c.here.map((h) => `<li>${esc(h)}</li>`).join('')}</ul>
       <div class="feeds"><span>Ripples into</span>${COUPLING[k].map((b) => `<i>${BUDGET_LABEL[b]}</i>`).join('')}</div>
     </section>
+    <section class="alloc" id="alloc">${allocPanel(k)}</section>
     <div class="craft-wrap" id="craft">${craftSVG(state.design, { screen: k })}</div>
     ${step.params ? slidersHTML(step) : optionsHTML(step)}
     <div id="rip">${rippleHTML()}</div>
@@ -261,6 +327,7 @@ function refreshDynamic() {
   const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
   if (ch) set('chart-grid', graphsInner(ch, k));
   if (step && step.params) set('live', liveStats(k));
+  set('alloc', allocPanel(k));
   set('craft', craftSVG(state.design, { screen: k }));
   set('rip', rippleHTML());
   const next = document.querySelector('[data-act=next]'); if (next) next.disabled = !canNext();
@@ -282,16 +349,33 @@ function screenReview() {
   }
   const ch = buildCharts(d, ESTIMATE);
   const keys = CHART_ORDER.filter((k) => ch[k]);
-  const reds = keys.filter((k) => ch[k].status === 'red').length; const yellows = keys.filter((k) => ch[k].status === 'yellow').length;
+  const reqs = requirements(d); const cf = compliance(d);
+  const reds = reqs.filter((r) => r.status === 'red').length; const yellows = reqs.filter((r) => r.status === 'yellow').length;
   const over = b.cost > b.budget;
+  const ready = !over && cf.ok;
+  const own = (r) => `${SUB_LABEL[r.sub]} · ${r.kind === 'cost' ? 'cost' : 'power'}`;
+  const fmt = (r) => (r.kind === 'cost' ? f$ : fW);
+  const crButton = (r) => {
+    if (!r.over) return '';
+    const ok = r.kind === 'power' || cf.reserve >= r.over;
+    return `<button class="btn small" data-act="cr" data-k="${r.key}" data-amt="${r.over}" ${ok ? '' : 'disabled'}>${r.kind === 'cost' ? `Change request +${f$(r.over)} from reserve` : `Change request +${fW(r.over)}`}</button>`;
+  };
+  const allocRows = cf.rows.filter((r) => r.alloc > 0 || r.used > 0).map((r) => `<div class="vrow ${r.over ? 'red' : 'green'}"><div><div>${own(r)}</div><small>${fmt(r)(r.used)} used of ${fmt(r)(r.alloc)}</small></div>${crButton(r)}</div>`).join('');
   return `${header()}<main><h1>Design review</h1>
     <div class="craft-wrap">${craftSVG(d)}</div>
-    <div class="summary">${reds ? `<b class="red-t">${reds} failing</b> · ` : ''}${yellows ? `<b class="yellow-t">${yellows} thin</b> · ` : ''}${!reds && !yellows ? '<b class="green-t">All clear</b>' : ''}</div>
+    <h2>Requirements verification</h2>
+    <div class="summary">${reds ? `<b class="red-t">${reds} failing</b> · ` : ''}${yellows ? `<b class="yellow-t">${yellows} thin</b> · ` : ''}${!reds && !yellows ? '<b class="green-t">All verified</b>' : ''}</div>
+    <div class="verify">${reqs.map((r) => `<div class="vrow ${r.status}"><b class="rid">${r.id}</b><div><div>${esc(r.text)}</div><small>${r.owner} · ${r.by}</small></div><span class="r-m">${fPct(r.margin)}</span></div>`).join('')}</div>
     <div class="unlock">Nominal margins shown. Launch adds 0–15% dry-mass growth + 1 deep-space anomaly.</div>
-    <div class="chart-grid">${keys.map((k) => renderChart(ch[k])).join('')}</div>
+    <h2>Budget allocations</h2>
+    <div class="verify">${allocRows}
+      <div class="vrow ${cf.reserve < 0 ? 'red' : cf.reserve < cf.minReserve ? 'yellow' : 'green'}"><div><div>Cost reserve</div><small>${f$(cf.reserve)} left. Change requests draw on it.</small></div></div>
+      <div class="vrow ${cf.short ? 'red' : 'green'}"><div><div>Power system vs allocations</div><small>Must supply ${fW(cf.required)}. Yours gives ${fW(cf.supply)}.</small></div>${cf.short ? '<button class="btn small" data-act="realloc">Reallocate</button>' : ''}</div></div>
+    <details class="picks"><summary>All budget graphs</summary><div class="chart-grid">${keys.map((k) => renderChart(ch[k])).join('')}</div></details>
     <details class="picks"><summary>Your design</summary><div class="costbox">${rows}</div></details>
-    ${over ? `<div class="warn">Launch blocked: over budget by $${R(b.cost - b.budget)}M.</div>` : ''}
-  </main>${nav(!over, 'Launch')}`;
+    ${over ? `<div class="warn">Launch blocked: over budget by ${f$(b.cost - b.budget)}.</div>` : ''}
+    ${!over && !cf.ok ? '<div class="warn">Launch blocked: an owner is over their allocation, or the power system does not cover the allocated loads. File change requests, redesign, or reallocate.</div>' : ''}
+  </main>${nav(ready, 'Launch')}`;
 }
 
 function historyHTML() {
@@ -421,6 +505,10 @@ function showResult(res) {
   const map = f ? `<p class="a-sub">The failure traces back to these choices:</p>${couplingMap(d, partName, fk)}` : '';
   const later = f ? downstream(res, fk) : [];
   const warnLater = later.length ? `<div class="warn">Downstream Warning: Even if you survived ${fk ? CHART_LABEL[fk].toLowerCase() : 'that'}, this design also failed ${later.map((k) => CHART_LABEL[k].toLowerCase()).join(' and ')}.</div>` : '';
+  const rq = f ? requirements(d).find((r) => r.id === reqFor(f)) : null;
+  const overs = f ? compliance(d).rows.filter((r) => r.over > 0) : [];
+  const reqLine = !rq ? '' : `<p class="a-req"><b>${rq.id} not met:</b> ${esc(rq.text)}. Owner: ${rq.owner}.</p>
+      <p class="note">${overs.length ? `Allocation overruns: ${overs.map((r) => `${SUB_LABEL[r.sub]} +${r.kind === 'cost' ? f$(r.over) : fW(r.over)}`).join(', ')}. In a real program each needs a change request.` : 'Every owner stayed inside their allocation, so budget discipline was fine. The requirement itself was the problem.'}</p>`;
   document.getElementById('result').innerHTML = `
     <div class="outcome ${res.outcome}">
       <div class="o-tier">${tierName(res.outcome)}</div>
@@ -434,7 +522,7 @@ function showResult(res) {
       ${res.outcome !== 'none' ? `<div class="o-note">Your Cost: $${R(res.cost)}M | Target Par Cost: $${C.par}M</div>` : ''}
     </div>
     ${f ? `<section class="anomaly"><h2>Anomaly report</h2><p class="a-what">${esc(f.text)}</p>
-      ${warnLater}
+      ${reqLine}${warnLater}
       ${failChart}
       ${map}
       <p class="a-sub">The chain of cause and effect:</p>
@@ -474,6 +562,8 @@ function render() {
   const k = key();
   let html = '';
   if (k === 'contract') html = screenContract();
+  else if (k === 'reqs') html = screenReqs();
+  else if (k === 'alloc') html = screenAlloc();
   else if (k === 'review') html = screenReview();
   else if (k === 'launch') html = screenLaunch();
   else html = screenChoice(k);
@@ -487,7 +577,7 @@ const stepOf = (k) => FLOW.indexOf(k);
 function autoPick(mode) {
   if (!state.design.contract) return;
   if (mode === 'good') {
-    const best = cheapestFull(state.design.contract); if (best) state.design = { ...best.d };
+    const best = cheapestFull(state.design.contract); if (best) state.design = { ...best.d, alloc: fitAlloc(best.d), cr: {} };
   } else {
     const rng = mulberry32(Date.now() & 0xffffffff);
     for (const [k, p] of Object.entries(PARAMS)) {
@@ -505,8 +595,17 @@ $app.addEventListener('click', (e) => {
   const act = el.dataset.act;
   const keepScroll = () => { const y = window.scrollY; render(); window.scrollTo(0, y); };
   if (act === 'contract') {
-    state.design.contract = el.dataset.id; save(); render();
-  } else if (act === 'pick') {
+    state.design.contract = el.dataset.id;
+    state.design.alloc = defaultAlloc(contract()); state.design.cr = {};
+    save(); render();
+  } else if (act === 'cr') {
+    // Change request: the Flight Director approves it, and it draws on the reserve (cost) or grows the power the supply must cover.
+    const d = state.design; const amt = +el.dataset.amt; const k = el.dataset.k;
+    if (k.startsWith('cost.') && costReserve(d, contract()) < amt) return;
+    d.cr = { ...d.cr, [k]: (d.cr[k] || 0) + amt };
+    save(); keepScroll();
+  } else if (act === 'realloc') go(stepOf('alloc'));
+  else if (act === 'pick') {
     const before = showBudgets() ? margins() : null;
     state.design[el.dataset.slot] = el.dataset.id;
     ripple = computeRipple(before, showBudgets() ? margins() : null);
@@ -518,7 +617,7 @@ $app.addEventListener('click', (e) => {
     if (key() === 'contract' && DEBUG && !state.design.engine) autoPick('random');
     go(Math.min(FLOW.length - 1, state.step + 1));
   } else if (act === 'back') { if (canGoBack()) go(Math.max(0, state.step - 1)); }
-  else if (act === 'redesign') { state.attempt += 1; go(stepOf('power')); }
+  else if (act === 'redesign') { state.attempt += 1; go(stepOf('alloc')); }
   else if (act === 'newcontract') { state.attempt += 1; go(stepOf('contract')); }
   else if (act === 'reset') {
     if (confirm('Start over as a new team? This clears all attempts.')) { state = fresh(); save(); render(); }
@@ -528,7 +627,16 @@ $app.addEventListener('click', (e) => {
 
 // Sliders: update the design and the readouts live, and show what moved when you let go.
 $app.addEventListener('input', (e) => {
-  const el = e.target; if (!el.matches || !el.matches('input[type=range][data-key]')) return;
+  const el = e.target;
+  if (el.matches && el.matches('input[type=range][data-alloc]')) {
+    const [kind, id] = el.dataset.alloc.split('.'); const v = parseFloat(el.value);
+    state.design.alloc[kind][id] = v;
+    document.getElementById(`ao-${kind}-${id}`).textContent = kind === 'cost' ? f$(v) : fW(v);
+    document.getElementById('alloc-sum').innerHTML = allocSummary();
+    document.querySelector('[data-act=next]').disabled = !canNext();
+    save(); return;
+  }
+  if (!el.matches || !el.matches('input[type=range][data-key]')) return;
   const k = el.dataset.key;
   if (dragBefore === null && showBudgets()) dragBefore = margins();
   state.design[k] = parseFloat(el.value);

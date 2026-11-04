@@ -28,7 +28,7 @@ export function craftGroup(d, { hl = [], labels = false } = {}) {
   const dish = paramVal(d, 'dish'); const tx = paramVal(d, 'txPower');
   const P = parts(d);
   const pay = P.payload ? P.payload.id : 'cam';
-  const hasNight = !!(P.D && P.D.nightHours);
+  const hasNight = !!(P.D && P.D.dark);
   const geo = craftGeom(d);
   const cls = (id, extra = '') => `part ${extra} ${hl.includes(id) ? 'hl' : ''}`.trim();
   const g = []; const lab = [];

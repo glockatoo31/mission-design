@@ -22,14 +22,24 @@ Three rounds, about five minutes each.
    - **Power** (same lead): *Keep the lights on*, with the least mass.
    - **Rocket** (Flight Director): *Lift it*, with the cheapest rocket.
 
-   Parts have real names (a patch antenna, a medium-gain dish, a Juno-style titanium radiation vault, a
-   GPHS-RTG as flown on New Horizons, a Dawn-style ion thruster, Electron/Atlas V/Falcon Heavy-class launchers).
-   Every part is also a small **trade study**: each option shows its numbers on criteria that pull against
-   each other (the best per criterion is green), and the lead taps the number they are optimising for. That
-   picks the option and records the reason. A page's Next stays locked until its parts each have one.
-   From round 2 a page shows live whether its challenge is **met and lean**, **met but over-built** (and
-   what would do it with less), **not met**, or **not met and nothing on the page can fix it** (another
-   lead's choice is in the way).
+   Every subsystem offers several **real parts**, each with its own character and a **heritage** (flight-proven,
+   qualified, or new): four antennas (X-band patch, X-band dish, deployable mesh, Ka-band), five power sources
+   (silicon, GaAs and ROSA-style arrays, an MMRTG, a GPHS-RTG), five thermal systems (MLI, louvers + radiators,
+   heat pipes, a tantalum box, a Juno-style titanium vault), five engines (hydrazine, a solid motor, an
+   R-4D-class biprop, a Hall thruster, a Dawn-style ion thruster), two tank types and four launchers. After
+   choosing a part you **size it** with sliders (dish and transmitter power, array area or RTG count, battery,
+   radiator and shielding, fuel).
+
+   **Heritage matters.** How much heavier than planned the hardware comes out at launch depends on how proven
+   each part is, weighted by its mass (5% for flight-proven, 12% qualified, 25% new), and launch day decides how
+   much of it shows up. A cheap, new part has a hidden cost.
+
+   Every part is also a small **trade study**: each option shows its numbers at its usual size on criteria that
+   pull against each other, including its risk (the best per criterion is green), and the lead taps the number
+   they are optimising for. That picks the option and records the reason. A page's Next stays locked until its
+   parts each have one. From round 2 a page shows live, as you drag the sliders, whether its challenge is
+   **met and lean**, **met but over-built** (and which part and size would do it with less), **not met**, or
+   **not met and nothing on the page can fix it** (another lead's choice is in the way).
 4. **Review**, then **launch** (about 30 seconds, with a 2x button from round 2).
 5. **Result**: up to three stars. ★ you arrived and operated, ★★ you met the science goal, ★★★ you did it
    within 10% of the par cost (the cheapest possible design). Going over budget fails R4 and caps the
@@ -76,21 +86,27 @@ npm run dev
 npm run balance
 ```
 
-Every contract has 1,944 designs (4 antennas × 3 thermal × 4 power × 3 tanks × 3 engines × 2 routes × 3
-rockets). The test plays all of them through the same `src/model.js` the app uses, for both the original
-and the amended contract, and checks that:
+Every part type is tried at several sizes: 192,000 designs per contract (576,000 where there is a dark period to
+survive: the Moon, Mars and Mercury, which also try three battery sizes). The test streams all of them through the same
+`src/model.js` the app uses, for both the original and the amended contract (a few minutes), and checks that:
 
-- every contract has winners (7-49 each) and funding keeps the par cost 10-14% inside it
+- every contract has winning designs and funding keeps the par cost 10-14% inside it; `src/par.js` (the stored cheapest designs) matches the solver
 - no design has every bar green, and the best winner runs 5-14% thin
-- the amended contract is still winnable at about 12% margin, and the round-1 cheapest design no longer wins
+- the amended contract is still winnable at about 12% margin, and the amendment bites (the round-1 cheapest design stops winning, or the cheapest design costs 25% more)
 - each contract has at least three reachable failure modes including its own hazard
 - interface demands add up to the need (power, heat, lift, cost), and a failure traces to the interface in deficit
 - every choice is a real trade (no option is best on every criterion), and the decision record works for sampled designs
 - the cheapest winner meets all six subsystem mini-challenges, and each challenge can land in at least two outcomes
+- every part is in at least one winning design somewhere (no dead weight), and no part is in every winner
 - an over-budget design flies in round 1
 
-Add `--seeds` to also average success over seeds 1-20. All numbers live in [`src/data.js`](src/data.js)
-(including the preset sizes and each contract's `change`). Change them, rerun `npm run balance`, repeat.
+All numbers live in [`src/data.js`](src/data.js) and [`src/parts.js`](src/parts.js) (including each contract's `change`). After changing any
+number, regenerate the stored par designs and rerun the test:
+
+```bash
+npm run balance -- --write-par
+npm run balance
+```
 
 ## Deploy to GitHub Pages
 
@@ -128,16 +144,17 @@ Combine them: `?seed=7&demo` (add `&debug` to rehearse).
 
 - **Parts are formulas.** Each preset sets sizes (array area, RTG units, dish and transmitter power, radiator
   area, shielding, fuel) and the formulas in `src/data.js` return mass, cost and performance.
-- **Mass**: bus + instrument + parts, plus 25% structure; fuel on top. A hidden 0-15% mass growth (seeded) is applied at launch.
+- **Mass**: bus + instrument + parts, plus 25% structure; fuel on top. A hidden mass growth (seeded, scaled by how proven each part is) is applied at launch.
 - **Launcher**: capacity falls with launch energy. Direct needs more energy than Assist.
-- **Delta-v**: rocket equation from engine Isp and fuel. The ion engine needs 600 W at arrival and extra delta-v.
-- **Power**: solar falls with 1/r² and degrades each year; RTGs are constant but decay 1.5%/yr. Load = bus + instrument + transmitter (3 W per radio watt) + heaters.
+- **Delta-v**: rocket equation from engine Isp and fuel. Every burn carries a trajectory-correction allowance (30 m/s plus 5%). Electric engines (Hall, ion) need power at arrival and extra delta-v to capture; a solid motor cannot be trimmed, so it needs 8% more.
+- **Power**: solar falls with 1/r² and degrades each year (silicon twice as fast as GaAs); RTGs are constant but decay (an MMRTG 4%/yr, a GPHS-RTG 1.5%/yr). Load = bus + instrument + transmitter (3 W per radio watt) + heaters.
+- **The dark**: the Moon's 14-day night, every Martian night and Mercury's eclipses run on the battery. It may be discharged to 80% at most, and cycle life falls steeply with depth of discharge (about 2,500 cycles at 40% depth, far fewer at 80%), so a battery that is too small runs flat and one that is cycled too deep wears out before the mission ends. An RTG keeps supplying through the dark.
 - **Thermal**: sunlight (plus RTG and amplifier waste heat) against the radiator limit; the cold side shows up as heater power, and radiators leak heat in the cold.
 - **Data**: returned = min(generated, downlinked); downlink falls with 1/r² from Earth.
 - **Radiation**: dose from the trip, the destination, flybys and flares, against the shielding.
 - **Cost**: parts + rocket + operations ($/year × mission years). Over budget fails R4.
 - **Design life**: every part has one; longer missions can outlive parts.
-- **Hazards**: Mercury 10x sun, Moon 14-day night, Mars dust storm, Europa radiation, Pluto faint signal.
+- **Hazards**: Mercury 10x sun and eclipses, Moon 14-day night, Mars dust storm (−90% sunlight) and nightly cycling, Europa radiation, Pluto faint signal.
 
 ## Manual test checklist (multiple phones)
 
@@ -161,7 +178,7 @@ Open the URL on 3-4 phones (or tabs, at least one real phone):
 
 ## Files
 
-- `src/data.js`: every tunable number (destinations, contracts and their amendments, part formulas, presets, launchers, events).
+- `src/data.js`: destinations, contracts and their amendments, formulas, events. `src/parts.js`: the parts catalog (names, numbers, heritage). `src/par.js`: generated cheapest designs.
 - `src/model.js`: physics, launch simulation, anomaly chains, the design space and par cost. No DOM; shared with the balance script.
 - `src/syseng.js`: requirements and interface requirements (who asks what of whom).
 - `src/trades.js`: the trade table for each choice (criteria, best option) and the decision record.

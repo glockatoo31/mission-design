@@ -3,12 +3,12 @@ import '@fontsource-variable/geist-mono';
 import './style.css';
 import { DESTINATIONS, CONTRACTS, PAYLOADS, PARAMS, STEPS } from './data.js';
 import {
-  budgets, budgetMargins, marginColor, parts, simulate, explain, launchConditions, teamCode, ESTIMATE, NOMINAL,
-  isComplete, cheapestFull, par, mulberry32, fmtYr, fmtGb,
+  budgets, budgetMargins, marginColor, parts, simulate, explain, launchConditions, teamCode, ESTIMATE,
+  isComplete, par, parDesign, paramVal, mulberry32, fmtYr, fmtGb,
 } from './model.js';
 import { LEAD, fmtU, interfaces, incoming, outgoing, failRow, requirements, reqFor } from './syseng.js';
 import { trade, decisions, gaveUp, fmtC } from './trades.js';
-import { PAGES, challengeState } from './pages.js';
+import { PAGES, challengeState, knobsFor } from './pages.js';
 import {
   buildCharts, renderChart, resetCharts, attachHover, chartForFailure, CHART_ORDER, CHART_LABEL,
 } from './charts.js';
@@ -23,7 +23,7 @@ const DEBUG = query.has('debug');
 // ?demo: three contracts, three different traps (deadline + battery, dust storm + mass, radiation + power).
 const DEMO_IDS = query.has('demo') ? ['lunar-survey', 'mars-survey', 'europa-spec'] : null;
 const URL_SEED = query.has('seed') ? Math.abs(parseInt(query.get('seed'), 10)) || 1 : null;
-const STORE = 'mission-design-v7';
+const STORE = 'mission-design-v8';
 const MAX_ROUNDS = 3;
 
 // The loop: take a contract, read its requirements, then one page per subsystem (each with its
@@ -38,15 +38,12 @@ const OWNER = { power: 'pt', thermal: 'pt', comms: 'comms', traj: 'prop', engine
 const stepName = (k) => STEP_NAME[k];
 const roleBadge = (k) => (PAGE[k] ? `Pass phone → ${LEAD[PAGE[k].who]}` : 'Role: Flight Director');
 
-// The starter design: a flying baseline. Every slot starts at its middle choice.
+// The starter design: a flying baseline made of the standard part in every slot, at its usual size.
 function blank() {
   // why: the criterion each part was chosen for (the trade-study rationale).
   const d = { contract: null, changed: false, why: {}, ...Object.fromEntries(Object.entries(PARAMS).map(([k, p]) => [k, p.def])) };
-  const start = { traj: 'direct', engine: 'biprop', launcher: 'medium' };
-  for (const s of STEPS) {
-    const id = start[s.key] || 'm'; const o = s.list.find((x) => x.id === id);
-    d[s.key] = id; if (o.set) Object.assign(d, o.set);
-  }
+  const start = { comms: 'xdish', traj: 'direct', engine: 'biprop', tank: 'ti', thermal: 'louver', power: 'gaas', launcher: 'medium' };
+  for (const s of STEPS) { d[s.key] = start[s.key]; Object.assign(d, s.list.find((x) => x.id === start[s.key]).def || {}); }
   return d;
 }
 const fresh = () => ({ step: 0, design: blank(), attempt: 1, seed: URL_SEED ?? 1000 + Math.floor(Math.random() * 9000), history: [] });
@@ -61,6 +58,7 @@ function load() {
 }
 let state = load() || fresh();
 let ripple = null; // budgets the last change moved (round 2+)
+let dragBefore = null; // margins when a slider drag started
 let anim = null; // running launch animation handle
 let speed = 1; // launch playback speed (2x toggle, round 2+)
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* private mode */ } };
@@ -134,13 +132,13 @@ function optionsHTML(step) {
     </div>`).join('')}</div>`;
 }
 
-// Picking sets the sizes the physics uses (presets) or the id (engine, route, rocket). A new
-// option starts with no recorded reason unless one is given; keeping the same option keeps its reason.
+// Picking a part sets its id and starts its sizes at the part's usual size (the sliders then resize
+// it). A new part starts with no recorded reason unless one is given; keeping the same part keeps it.
 function setChoice(k, id, whyId) {
   const opt = STEP[k].list.find((x) => x.id === id);
   const same = state.design[k] === id;
   state.design[k] = id;
-  if (opt && opt.set) Object.assign(state.design, opt.set);
+  if (!same && opt && opt.def) Object.assign(state.design, opt.def);
   state.design.why = { ...state.design.why, [k]: whyId || (same ? state.design.why[k] : null) || null };
 }
 
@@ -250,10 +248,10 @@ const reasonLabel = (k) => {
 };
 
 function hudHTML() {
-  if (!showBudgets()) return '<div class="hud"><span>Round 1 flies blind. Pick, then launch.</span></div>';
+  if (!showBudgets()) return '<div class="hud" id="hud"><span>Round 1 flies blind. Pick, then launch.</span></div>';
   const b = budgets(state.design, ESTIMATE); const M = budgetMargins(b);
   const g = (label, text, m) => `<span class="g ${marginColor(m)}">${label} <b>${text}</b> <i>${fPct(m)}</i></span>`;
-  return `<div class="hud">${g('Cost', `${f$(b.cost)} of ${f$(b.budget)}`, M.cost)}${g('Lift', b.cap == null ? '–' : `${R(b.wet)} of ${R(b.cap)} kg`, M.mass)}</div>`;
+  return `<div class="hud" id="hud">${g('Cost', `${f$(b.cost)} of ${f$(b.budget)}`, M.cost)}${g('Lift', b.cap == null ? '–' : `${R(b.wet)} of ${R(b.cap)} kg`, M.mass)}</div>`;
 }
 
 // The mini-challenge card: what to do, and (from round 2) whether it is met and lean.
@@ -261,32 +259,62 @@ function challengeHTML(page, cs) {
   const m = page.minimize; const val = (v) => fmtU(v, m.unit);
   const goal = `Meet it with the least ${m.label}.`;
   if (!showBudgets()) return `<div class="challenge"><b>Mini-challenge: ${page.name}.</b> ${goal} You will see how you did after the flight.</div>`;
-  const names = (c) => page.steps.map((k, i) => trade(k, state.design).options.find((o) => o.id === c.ids[i]).name).join(' + ');
-  if (cs.met && cs.lean) return `<div class="challenge ok"><b>✓ ${page.name}: met, and lean.</b> Nothing with less ${m.label} would do it (${val(cs.cur.value)}).</div>`;
-  if (cs.met) return `<div class="challenge warn"><b>✓ ${page.name}: met, but over-built.</b> ${esc(names(cs.best))} also does it with ${val(cs.cur.value - cs.best.value)} less ${m.label}.</div>`;
-  if (cs.anyMet) return `<div class="challenge bad"><b>✗ ${page.name}: not met yet.</b> An option here would meet it with the rest of the spacecraft as it is.</div>`;
+  if (cs.met && cs.lean) return `<div class="challenge ok"><b>✓ ${page.name}: met, and lean.</b> Nothing much lighter would do it (${val(cs.cur.value)} ${m.label}).</div>`;
+  if (cs.met) return `<div class="challenge warn"><b>✓ ${page.name}: met, but over-built.</b> ${esc(cs.best.label)} also does it with ${val(cs.cur.value - cs.best.value)} less ${m.label}.</div>`;
+  if (cs.anyMet) return `<div class="challenge bad"><b>✗ ${page.name}: not met yet.</b> A different part or size here would meet it with the rest of the spacecraft as it is.</div>`;
   return `<div class="challenge bad"><b>✗ ${page.name}: not met, and nothing on this page can fix it.</b> Something another lead chose is in the way. Open "Who needs what".</div>`;
 }
 
 // Every part is a trade study: the numbers pull against each other, and the lead records which
 // one they chose it for. The page's Next stays locked until each of its parts has a reason.
+// The sizing sliders for the part that is chosen on this page.
+const fmtV = (v, p) => `${n1(v)}${p.unit ? ` ${p.unit}` : ''}`;
+function slidersHTML(page) {
+  const d = state.design; const D = dest();
+  const ks = knobsFor(page, d).filter((k) => k.key !== 'battery' || D.dark);
+  if (!ks.length) return '';
+  return `<div class="sliders"><h3 class="slh">Size it</h3>${ks.map((k) => {
+    const v = Math.min(k.max, Math.max(k.min, paramVal(d, k.key)));
+    return `<div class="slider"><div class="s-head"><label for="sl-${k.key}">${k.label}</label><output id="out-${k.key}" class="s-val">${fmtV(v, k)}</output></div>
+      <input id="sl-${k.key}" type="range" min="${k.min}" max="${k.max}" step="${k.step}" value="${v}" data-key="${k.key}">
+      <div class="s-scale"><span>${fmtV(k.min, k)}</span><span>${fmtV(k.max, k)}</span></div></div>`;
+  }).join('')}</div>`;
+}
+
+// The parts of a page that move when something changes: the cost/lift bar, the challenge card,
+// the gauges, the charts and the craft. Sliders never re-render themselves, only these do.
+function chartsHTML(page) {
+  const ch = showBudgets() ? buildCharts(state.design, ESTIMATE) : null;
+  return ch ? `<section class="graphs"><div class="chart-grid">${page.charts.filter((k) => ch[k]).map((k) => renderChart(ch[k])).join('')}</div></section>` : '';
+}
+function refreshPage(page) {
+  resetCharts();
+  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  const hud = document.getElementById('hud'); if (hud) hud.outerHTML = hudHTML();
+  set('challenge', challengeHTML(page, challengeState(page, state.design)));
+  set('gauges', gaugesHTML(page.who, page.rows));
+  set('charts', chartsHTML(page));
+  set('craft', craftSVG(state.design, { screen: page.craft }));
+  set('rip', rippleHTML());
+}
+
 function screenPage(page) {
   const d = state.design; const D = dest(); const b = budgets(d, ESTIMATE); const C = b.C;
   const idx = PAGES.indexOf(page); const left = page.steps.filter((k) => !d.why[k]).length;
-  const ch = showBudgets() ? buildCharts(d, ESTIMATE) : null;
   const ctx = { D, C, b };
   return `${header()}${hudHTML()}<main>${debugBar()}
     <div class="eyebrow"><span class="role">Subsystem ${idx + 1} of ${PAGES.length} · ${LEAD[page.who]}</span></div>
     <h1>${page.title}: ${page.name}</h1>
     <p class="lead">${esc(page.brief(ctx))}</p>
-    ${challengeHTML(page, challengeState(page, d))}
+    <div id="challenge">${challengeHTML(page, challengeState(page, d))}</div>
     <p class="note">${esc(page.physics(ctx))}</p>
     <div class="craft-wrap" id="craft">${craftSVG(d, { screen: page.craft })}</div>
-    ${gaugesHTML(page.who, page.rows)}
+    <div id="gauges">${gaugesHTML(page.who, page.rows)}</div>
     <div id="rip">${rippleHTML()}</div>
     ${page.steps.map((k) => `<div class="card"><h3>${STEP[k].label} ${reasonLabel(k)}</h3>${optionsHTML(STEP[k])}</div>`).join('')}
-    <p class="note">Every part is a trade. Tap the number you are optimising for to choose it and record why (green is the best of the options).${left ? ` ${left} still need${left === 1 ? 's' : ''} a reason.` : ''}</p>
-    ${ch ? `<section class="graphs"><div class="chart-grid">${page.charts.filter((k) => ch[k]).map((k) => renderChart(ch[k])).join('')}</div></section>` : ''}
+    <p class="note">Every part is a trade, shown at its usual size. Tap the number you are optimising for to choose it and record why (green is the best of the options).${left ? ` ${left} still need${left === 1 ? 's' : ''} a reason.` : ''}</p>
+    ${slidersHTML(page)}
+    <div id="charts">${chartsHTML(page)}</div>
     <details class="who"><summary>Who needs what</summary><section class="alloc">${ifacePanel(page.steps[0])}</section></details>
   </main>${nav(left === 0, idx === PAGES.length - 1 ? 'Review' : 'Next')}`;
 }
@@ -587,10 +615,13 @@ function autoWhy() {
 function autoPick(mode) {
   if (!state.design.contract) return;
   if (mode === 'good') {
-    const best = cheapestFull(state.design.contract, NOMINAL, state.design.changed); if (best) state.design = { ...best.d, why: {} };
+    // The stored par design: the cheapest full success (par.js, checked by the balance test).
+    const best = parDesign(state.design.contract, state.design.changed); if (best) state.design = { ...best, why: {} };
   } else {
     const rng = mulberry32(Date.now() & 0xffffffff);
-    for (const s of STEPS) setChoice(s.key, s.list[Math.floor(rng() * s.list.length)].id);
+    for (const s of STEPS) { const o = s.list[Math.floor(rng() * s.list.length)]; state.design[s.key] = o.id; Object.assign(state.design, o.def || {}); }
+    // a random size for whichever sliders the chosen parts use
+    for (const p of PAGES) for (const k of knobsFor(p, state.design)) state.design[k.key] = +(k.min + Math.floor(rng() * (Math.round((k.max - k.min) / k.step) + 1)) * k.step).toFixed(2);
   }
   autoWhy();
   save(); render();
@@ -620,6 +651,22 @@ $app.addEventListener('click', (e) => {
     if (confirm('Start over as a new team? This clears all rounds.')) { state = fresh(); save(); render(); }
   } else if (act === 'dbg-random') autoPick('random');
   else if (act === 'dbg-good') autoPick('good');
+});
+
+// Sliders: the design and the page's live parts update while you drag; what moved is shown on release.
+$app.addEventListener('input', (e) => {
+  const el = e.target; if (!el.matches || !el.matches('input[type=range][data-key]')) return;
+  const k = el.dataset.key; const page = PAGE[key()]; if (!page) return;
+  if (dragBefore === null && showBudgets()) dragBefore = margins();
+  state.design[k] = parseFloat(el.value);
+  const out = document.getElementById(`out-${k}`); if (out) out.textContent = fmtV(state.design[k], { unit: PARAMS[k].unit });
+  save(); refreshPage(page);
+});
+$app.addEventListener('change', (e) => {
+  const el = e.target; if (!el.matches || !el.matches('input[type=range][data-key]')) return;
+  const page = PAGE[key()];
+  if (dragBefore && page) { ripple = computeRipple(dragBefore, margins()); if (ripple) ripple.who = page.who; refreshPage(page); }
+  dragBefore = null;
 });
 
 // If the page was reloaded mid-launch, replay the launch for this round.

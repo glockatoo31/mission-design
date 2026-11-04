@@ -2,7 +2,7 @@
 // orbits and sends data home. update() is driven by the launch loop in main.js.
 import { craftGroup, craftGeom } from './craft.js';
 
-const ROCKET = { light: [18, 64], medium: [24, 84], heavy: [32, 110] };
+const ROCKET = { light: [18, 64], f9: [21, 74], medium: [24, 84], heavy: [32, 110] };
 const PLANET_R = { mercury: 9, moon: 10, mars: 11, europa: 14, pluto: 8 };
 const LANDS = new Set(['moon', 'mars']); // shortcut: Pluto's flyby is drawn as an orbit, draw a pass-by if it matters
 const E = [34, 150]; const S = [296, 96]; const EARTH_OPS = [30, 30];

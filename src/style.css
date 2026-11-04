@@ -341,3 +341,11 @@ input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offs
 .challenge { margin: 10px 0; padding: 10px 14px; background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: 8px; font-size: .9375rem; }
 .challenge b { font-weight: 500; }
 .challenge.ok { border-left-color: var(--green); } .challenge.warn { border-left-color: var(--amber); } .challenge.bad { border-left-color: var(--red); }
+/* sizing sliders */
+.sliders { margin: 12px 0; padding: 12px 16px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+.slh { font-size: .875rem; color: var(--muted); margin: 0 0 8px; font-weight: 500; }
+.slider { margin: 10px 0 14px; }
+.s-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.s-val { font: 500 .9375rem var(--mono); color: var(--text); }
+.slider input[type=range] { width: 100%; min-height: 36px; accent-color: var(--accent); }
+.s-scale { display: flex; justify-content: space-between; font: .75rem var(--mono); color: var(--muted); }

@@ -6,7 +6,7 @@
 // 90 W, and its amplifier means Thermal must reject the heat). Each interface row below is one
 // such capacity check: what is needed, what the receiving lead's design provides, and who
 // contributes to the need.
-import { BUS, PAYLOADS, FLYBYS, RTG_HOT_FLUX, STRUCTURE_FRACTION } from './data.js';
+import { BUS, PAYLOADS, FLYBYS, STRUCTURE_FRACTION } from './data.js';
 import { budgets, budgetMargins, marginColor, ESTIMATE, fmtYr } from './model.js';
 
 export const LEAD = {
@@ -17,6 +17,7 @@ export const LEAD = {
 export function fmtU(v, unit) {
   const n = Math.round(v);
   if (unit === 'W') return `${n} W`;
+  if (unit === 'kWh') return `${v.toFixed(v < 10 ? 2 : 1)} kWh`;
   if (unit === '$M') return `$${n}M`;
   if (unit === 'kg') return `${n} kg`;
   if (unit === 'm/s') return `${n} m/s`;
@@ -27,7 +28,7 @@ export function fmtU(v, unit) {
 }
 
 const payloadOf = (C) => PAYLOADS.find((p) => p.id === C.payload);
-const LIFE_OWNER = { power: 'pt', thermal: 'pt', comms: 'comms', engine: 'prop', payload: 'sci' };
+const LIFE_OWNER = { power: 'pt', thermal: 'pt', comms: 'comms', engine: 'prop', payload: 'sci', battery: 'pt' };
 
 // Interface rows: { label, to, unit, need, have, margin, sources: [{ from, text, v }] }.
 // Rows whose inputs are not chosen yet are left out; sources with no value yet are left out.
@@ -38,7 +39,7 @@ export function interfaces(d) {
     if (need == null || !Number.isFinite(need)) return;
     rows.push({ label, to, unit, need, have: Number.isFinite(have) ? have : null, margin: typeof margin === 'number' ? margin : null, sources: sources.filter((s) => s.v != null && Number.isFinite(s.v) && s.v > 1e-9) });
   };
-  const eng = P.engine; const rtgHeat = P.power.rtgUnits * RTG_HOT_FLUX;
+  const eng = P.engine; const rtgHeat = P.power.hotFlux;
   const bus = BUS.powerW + payloadOf(C).powerW;
 
   add('Power', 'pt', 'W', b.load, b.supplyEnd, b.powerMargin, [
@@ -69,12 +70,19 @@ export function interfaces(d) {
       { from: 'env', text: `${fmtYr(D.opsYears)} at ${D.name}`, v: D.opsDosePerYr * D.opsYears },
     ]);
     if (b.weakest) {
-      add('Part life', LIFE_OWNER[b.weakest.key] || 'pt', 'yr', b.years, b.weakest.part.life, b.lifeMargin, [
-        { from: 'prop', text: 'trip length', v: tr.cruise }, { from: 'env', text: `time at ${D.name}`, v: D.opsYears },
-      ]);
+      add('Part life', LIFE_OWNER[b.weakest.key] || 'pt', 'yr', b.weakest.need, b.weakest.part.life, b.lifeMargin, b.weakest.key === 'battery'
+        ? [{ from: 'env', text: `${Math.round(D.dark.cyclesPerYr)} dark periods a year at ${Math.round(b.dod * 100)}% depth of discharge`, v: D.opsYears }]
+        : [{ from: 'prop', text: 'trip length', v: tr.cruise }, { from: 'env', text: `time at ${D.name}`, v: D.opsYears }]);
     }
   }
   if (tr) add('Schedule', 'prop', 'yr', tr.cruise, C.deadline, b.timeMargin, [{ from: 'prop', text: `${tr.label} route`, v: tr.cruise }]);
+  if (D.dark) {
+    add('Dark period', 'pt', 'kWh', b.nightNeedWh / 1000, b.usableWh / 1000, b.darkMargin, [
+      { from: 'sci', text: 'survival bus', v: (BUS.survivalW * D.dark.hours) / 1000 },
+      { from: 'pt', text: 'heaters', v: (b.heater * D.dark.hours) / 1000 },
+      { from: 'comms', text: 'radio and instrument kept on', v: (D.dark.ops * ((P.payload ? P.payload.powerW : 0) + P.comms.powerW) * D.dark.hours) / 1000 },
+    ]);
+  }
   add('Data', 'comms', 'Gbit', C.goalGb, b.returnable, b.dataMargin, [
     { from: 'sci', text: `instrument makes ${Math.round(b.genPerYr)} Gbit/yr for ${fmtYr(D.opsYears)}`, v: b.genPerYr * D.opsYears },
   ]);
@@ -119,7 +127,7 @@ export function failRow(f, b) {
   if (f.mode === 'insertion') return f.ion ? 'Ion burn power' : 'Burn';
   if (f.mode === 'flyby') return b.tr.flyby === 'venus' ? 'Venus flyby' : 'Radiation';
   return {
-    brownout: 'Power', freeze: 'Power', storm: 'Power', night: 'Power', overheat: 'Heat', radiation: 'Radiation',
+    brownout: 'Power', freeze: 'Power', storm: 'Power', night: 'Dark period', overheat: 'Heat', radiation: 'Radiation',
     life: 'Part life', data: 'Data', launcher: 'Lift', cost: 'Cost', deadline: 'Schedule',
   }[f.mode] || null;
 }
@@ -138,7 +146,7 @@ export function requirements(d) {
     { id: 'R1', name: 'Get there', text: `Get there: arrive within ${fmtYr(C.deadline)} and make the arrival burn`, margin: min(M.time, M.dv), owner: 'Propulsion & Trajectory Lead', by: 'Route · Engine · Fuel' },
     { id: 'R2', name: 'Do the science', text: `Do the science: return ${C.goalGb} Gbit`, margin: M.data, owner: 'Comms Lead', by: 'Antenna · Instrument' },
     // At Pluto the hazard is the faint signal, which is the science requirement already.
-    { id: 'R3', name: 'Stay alive', text: `Stay alive: ${D.hazard.name}, power, heat and part life`, margin: min(M.power, M.thermal, M.rad, M.life, D.id === 'pluto' ? null : b.hazardMargin), owner: 'Power & Thermal Lead', by: HAZARD_BY[D.id] },
+    { id: 'R3', name: 'Stay alive', text: `Stay alive: ${D.hazard.name}, power, heat and part life`, margin: min(M.power, M.thermal, M.rad, M.life, M.night, D.id === 'pluto' ? null : b.hazardMargin), owner: 'Power & Thermal Lead', by: HAZARD_BY[D.id] },
     { id: 'R4', name: 'Afford it and launch it', text: `Afford it: stay under $${C.budget}M and fit the rocket`, margin: min(M.cost, M.mass), owner: 'Flight Director', by: 'Every part · Rocket' },
   ];
   for (const r of rows) r.status = marginColor(r.margin);

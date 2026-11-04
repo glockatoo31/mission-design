@@ -2,20 +2,30 @@
 // Units: mass kg, power W, cost $M, data Gbit, delta-v m/s, time years, area m^2,
 // radiation krad, C3 (launch energy) km^2/s^2, solar flux in multiples of Earth's.
 
+import { COMMS_PARTS, POWER_PARTS, THERMAL_PARTS, ENGINES, TANKS, LAUNCHERS } from './parts.js';
+export { ENGINES, LAUNCHERS, TANKS, COMMS_PARTS, POWER_PARTS, THERMAL_PARTS };
+
 export const G0 = 9.81;
 
 // Structure, wiring, and brackets are a fixed fraction of everything else.
 export const STRUCTURE_FRACTION = 0.25;
 
 // Hidden mass growth applied at launch (seeded, 0..MAX). Never shown before launch.
-export const MASS_GROWTH_MAX = 0.15;
+
 
 // Avionics, computer, reaction wheels: always on board.
 export const BUS = { mass: 60, cost: 40, powerW: 60, survivalW: 15 };
 
+// A battery may be discharged to 80% at most, and the deeper it is cycled the sooner it wears out:
+// cycle life = baseCycles x (refDod / depth)^exponent, kept between minCycles and maxCycles.
+export const BATTERY_LIFE = { dodMax: 0.8, baseCycles: 2500, refDod: 0.4, exponent: 1.3, minCycles: 200, maxCycles: 8000 };
+
+// Every arrival burn carries a trajectory-correction allowance: a fixed amount plus a fraction of the burn.
+export const TCM = { base: 30, frac: 0.05 };
+
 // RTG waste heat, per unit: warms the craft (cuts heater power) but adds heat in hot places.
-export const RTG_HEATER_CREDIT_W = 100;
-export const RTG_HOT_FLUX = 0.8;
+
+
 
 // Margin thresholds for the design review (fraction of limit).
 export const MARGIN_GREEN = 0.15;
@@ -66,9 +76,9 @@ export const DESTINATIONS = [
     dvLabel: 'Extreme', thermalLabel: 'Extreme heat', difficulty: 5, mult: 2.5,
     hazard: { name: 'Sun at 10x', text: '10x sunlight cooks solar arrays and needs big radiators.' },
     sunAU: 0.39, solarCap: 2.0, solarDeg: 0.07, earthAU: 1.0, contact: 0.33,
-    hotFlux: 10, coldW: 0,
+    hotFlux: 10, coldW: 0, dark: { hours: 1, cyclesPerYr: 730, ops: 1, label: 'Eclipse' },
     cruiseDosePerYr: 2, opsDosePerYr: 15,
-    opsYears: 2, opsCostPerYr: 12, lowThrustPenalty: 1.1,
+    opsYears: 2, opsCostPerYr: 7, lowThrustPenalty: 1.1,
     traj: {
       direct: { label: 'Direct', c3: 35, dv: 2300, cruise: 1.0 },
       assist: { label: 'Venus flybys', c3: 16, dv: 1600, cruise: 6.5, flyby: 'venus', flybyYear: 2 },
@@ -79,7 +89,7 @@ export const DESTINATIONS = [
     dvLabel: 'Easy', thermalLabel: 'Extreme swings', difficulty: 3, mult: 1.3,
     hazard: { name: 'Lunar night', text: '14 days of dark and -170 C. No sun: batteries and heaters must carry you.' },
     sunAU: 1.0, solarCap: 1.0, solarDeg: 0.02, earthAU: 0.05, contact: 0.5,
-    hotFlux: 2.2, coldW: 60, nightHours: 336,
+    hotFlux: 2.2, coldW: 60, dark: { hours: 336, cyclesPerYr: 12.4, ops: 0, label: 'Lunar night' },
     cruiseDosePerYr: 3, opsDosePerYr: 8,
     opsYears: 1, opsCostPerYr: 15, lowThrustPenalty: 99,
     traj: {
@@ -92,7 +102,7 @@ export const DESTINATIONS = [
     dvLabel: 'Easy', thermalLabel: 'Mild', difficulty: 1, mult: 1.0,
     hazard: { name: 'Dust storm', text: 'A global dust storm cuts sunlight by 80% for weeks.' },
     sunAU: 1.52, solarCap: 1.0, solarDeg: 0.02, earthAU: 1.5, contact: 0.33,
-    hotFlux: 0.43, coldW: 45, stormFactor: 0.2, stormYear: 0.6,
+    hotFlux: 0.43, coldW: 45, stormFactor: 0.1, stormYear: 0.6, dark: { hours: 12.3, cyclesPerYr: 355, ops: 0.3, label: 'Martian night' },
     cruiseDosePerYr: 3, opsDosePerYr: 5,
     opsYears: 2, opsCostPerYr: 18, lowThrustPenalty: 1.6,
     traj: {
@@ -122,8 +132,8 @@ export const DESTINATIONS = [
     cruiseDosePerYr: 1.5, opsDosePerYr: 1,
     opsYears: 1, opsCostPerYr: 18, lowThrustPenalty: 1.0,
     traj: {
-      direct: { label: 'Direct', c3: 60, dv: 600, cruise: 8.0 },
-      assist: { label: 'Jupiter flyby', c3: 40, dv: 450, cruise: 9.5, flyby: 'jupiter', flybyYear: 1.1 },
+      direct: { label: 'Direct', c3: 85, dv: 600, cruise: 8.0 },
+      assist: { label: 'Jupiter flyby', c3: 60, dv: 450, cruise: 9.5, flyby: 'jupiter', flybyYear: 1.1 },
     },
   },
 ];
@@ -143,54 +153,18 @@ export const PAYLOADS = [
 // cheap to be robust. `change` is the amendment that lands from round 2: it patches the
 // contract and makes the round-1 winner stop winning.
 export const CONTRACTS = [
-  { id: 'lunar-survey', name: 'Lunar Pathfinder', dest: 'moon', payload: 'cam', goalGb: 70, deadline: 0.25, budget: 350, brief: 'Land near the south pole. Fast and cheap.', change: { patch: { payload: 'hires', goalGb: 300, budget: 455 } }  },
-  { id: 'lunar-spec', name: 'South Pole Spectrometry', dest: 'moon', payload: 'spec', goalGb: 300, deadline: 0.5, budget: 390, brief: 'Survive the lunar night and map the ice.', change: { patch: { payload: 'hires', goalGb: 900, budget: 450 } } },
-  { id: 'mars-survey', name: 'Mars Survey Lander', dest: 'mars', payload: 'cam', goalGb: 150, deadline: 1.5, budget: 265, brief: 'Ride out the dust storm and send pictures home.', change: { patch: { payload: 'spec', goalGb: 225, budget: 310 } } },
-  { id: 'mars-radar', name: 'Mars Subsurface Radar', dest: 'mars', payload: 'hires', goalGb: 1500, deadline: 3, budget: 365, brief: 'Radar under the surface. Heavy, hungry, huge data.', change: { patch: { goalGb: 2250, budget: 390 } } },
-  { id: 'mercury-survey', name: 'Mercury Surveyor', dest: 'mercury', payload: 'cam', goalGb: 150, deadline: 8, budget: 305, brief: 'Orbit Mercury and map the surface.', change: { patch: { payload: 'spec', goalGb: 450, budget: 355 } } },
-  { id: 'europa-spec', name: 'Europa Flyby Spectrometry', dest: 'europa', payload: 'spec', goalGb: 90, deadline: 7, budget: 615, brief: 'Fly past Europa before the radiation wins.', change: { patch: { payload: 'hires', goalGb: 135, budget: 810 } } },
-  { id: 'pluto-survey', name: 'Pluto Flyby Imaging', dest: 'pluto', payload: 'cam', goalGb: 1.6, deadline: 10, budget: 560, brief: 'A decade out. Send the pictures home.', change: { patch: { payload: 'spec', goalGb: 2.4, budget: 635 } } },
-  { id: 'pluto-spec', name: 'Pluto Flyby Spectrometry', dest: 'pluto', payload: 'spec', goalGb: 1.6, deadline: 9, budget: 635, brief: 'The same trip, a hungrier instrument, a tighter deadline.', change: { patch: { payload: 'hires', goalGb: 2.4, budget: 830 } } },
+  { id: 'lunar-survey', name: 'Lunar Pathfinder', dest: 'moon', payload: 'cam', goalGb: 70, deadline: 0.25, budget: 350, brief: 'Land near the south pole. Fast and cheap.', change: { patch: { payload: 'hires', goalGb: 300, budget: 445 } }  },
+  { id: 'lunar-spec', name: 'South Pole Spectrometry', dest: 'moon', payload: 'spec', goalGb: 300, deadline: 0.5, budget: 390, brief: 'Survive the lunar night and map the ice.', change: { patch: { payload: 'hires', goalGb: 900, budget: 445 } } },
+  { id: 'mars-survey', name: 'Mars Survey Lander', dest: 'mars', payload: 'cam', goalGb: 150, deadline: 1.5, budget: 250, brief: 'Ride out the dust storm and send pictures home.', change: { patch: { payload: 'spec', goalGb: 225, budget: 295 } } },
+  { id: 'mars-radar', name: 'Mars Subsurface Radar', dest: 'mars', payload: 'hires', goalGb: 1500, deadline: 3, budget: 370, brief: 'Radar under the surface. Heavy, hungry, huge data.', change: { patch: { goalGb: 2250, budget: 375 } } },
+  { id: 'mercury-survey', name: 'Mercury Surveyor', dest: 'mercury', payload: 'cam', goalGb: 150, deadline: 8, budget: 250, brief: 'Orbit Mercury and map the surface.', change: { patch: { payload: 'spec', goalGb: 450, budget: 305 } } },
+  { id: 'europa-spec', name: 'Europa Flyby Spectrometry', dest: 'europa', payload: 'spec', goalGb: 90, deadline: 7, budget: 570, brief: 'Fly past Europa before the radiation wins.', change: { patch: { payload: 'hires', goalGb: 135, budget: 750 } } },
+  { id: 'pluto-survey', name: 'Pluto Flyby Imaging', dest: 'pluto', payload: 'cam', goalGb: 1.6, deadline: 10, budget: 585, brief: 'A decade out. Send the pictures home.', change: { patch: { payload: 'spec', goalGb: 4, budget: 630 } } },
+  { id: 'pluto-spec', name: 'Pluto Flyby Spectrometry', dest: 'pluto', payload: 'spec', goalGb: 1.6, deadline: 9, budget: 630, brief: 'The same trip, a hungrier instrument, a tighter deadline.', change: { patch: { payload: 'hires', goalGb: 2.4, budget: 885 } } },
 ];
 
-// Chunky choices. Each preset sets the slider values the physics already uses.
-// The 'm' preset of every slot is the starter design.
-export const PRESETS = {
-  comms: [
-    { id: 's', name: 'Patch antenna, 0.5 m', blurb: 'Small and frugal. A trickle of data.', set: { dish: 0.5, txPower: 15 } },
-    { id: 'm', name: 'Medium-gain dish, 1.2 m', blurb: 'A balanced link.', set: { dish: 1.2, txPower: 40 } },
-    { id: 'l', name: 'High-gain dish, 2.5 m', blurb: 'A fat downlink. Heavy, hungry, hot.', set: { dish: 2.5, txPower: 70 } },
-  ],
-  tank: [
-    { id: 's', name: 'Titanium tank, 300 kg', blurb: 'Light. Short on speed change.', set: { fuel: 300 } },
-    { id: 'm', name: 'Titanium tank, 700 kg', blurb: 'A fair load of fuel.', set: { fuel: 700 } },
-    { id: 'l', name: 'Titanium tank, 1,200 kg', blurb: 'Lots of speed change. Lots of mass.', set: { fuel: 1200 } },
-  ],
-  thermal: [
-    { id: 's', name: 'MLI blankets', blurb: 'Gold-foil insulation. Light, with little cooling or shielding.', set: { radiator: 1, shield: 1 } },
-    { id: 'm', name: 'Louvers + radiator panels', blurb: 'Sheds heat. Leaks it in the cold.', set: { radiator: 8, shield: 2 } },
-    { id: 'l', name: 'Titanium radiation vault', blurb: 'Juno-style box: blocks radiation and insulates. Heavy.', set: { radiator: 2, shield: 7 } },
-  ],
-  power: [
-    { id: 's', name: 'Compact GaAs arrays', blurb: 'Gallium-arsenide cells. Light and cheap, weak far from the Sun.', set: { solarArea: 8, rtgUnits: 0, battery: 6 } },
-    { id: 'm', name: 'Wide-wing GaAs arrays + Li-ion battery', blurb: 'Plenty of power near the Sun.', set: { solarArea: 24, rtgUnits: 0, battery: 20 } },
-    { id: 'l', name: 'GPHS-RTG', blurb: 'Plutonium heat source, as flown on New Horizons. Steady anywhere. Heavy, pricey, warm.', set: { solarArea: 0, rtgUnits: 1, battery: 6 } },
-    { id: 'x', name: 'Twin GPHS-RTG', blurb: 'Two of them. Lots of steady power. Heavier, pricier, hotter.', set: { solarArea: 0, rtgUnits: 2, battery: 6 } },
-  ],
-};
 
-export const ENGINES = [
-  { id: 'mono', name: 'Hydrazine thrusters', blurb: 'Simple monopropellant thrusters. Light, low efficiency.', mass: 12, cost: 8, isp: 225, thrustN: 100, life: 15 },
-  { id: 'biprop', name: 'R-4D-class bipropellant engine', blurb: 'Strong and efficient: the workhorse for orbit insertion.', mass: 35, cost: 22, isp: 320, thrustN: 450, life: 12 },
-  { id: 'ion', name: 'Dawn-style ion thruster', blurb: 'Ten times the efficiency, tiny thrust, and it needs 600 W.', mass: 70, cost: 50, isp: 3000, thrustN: 0.2, lowThrust: true, powerW: 600, life: 6 },
-];
 
-// Capacity to a given launch energy: cap = baseKg * exp(-c3 / falloff)
-export const LAUNCHERS = [
-  { id: 'light', name: 'Electron-class light launcher', blurb: 'Cheap. Small payloads.', cost: 60, baseKg: 2400, falloff: 35 },
-  { id: 'medium', name: 'Atlas V-class medium launcher', blurb: 'The workhorse.', cost: 130, baseKg: 5000, falloff: 50 },
-  { id: 'heavy', name: 'Falcon Heavy-class heavy launcher', blurb: 'Huge energy. Huge price.', cost: 250, baseKg: 11000, falloff: 55 },
-];
 
 export const TRAJECTORIES = [
   { id: 'direct', name: 'Direct', blurb: 'Fast. Needs more launch energy.' },
@@ -207,16 +181,15 @@ export const RANDOM_EVENTS = [
   { id: 'calm', text: 'Quiet cruise. Nothing unusual.' },
 ];
 
-// The design screens after the contract, in order. `list` marks a discrete choice;
-// `params` are the sliders shown on that screen. Loads come first (antenna, route, engine,
-// fuel), then thermal and power are sized to what everyone else asks of them, then the
-// rocket has to lift the result. A late choice can break an earlier lead's budget.
+// The parts a team chooses from, per subsystem (the catalogs are in parts.js). Each page sizes the
+// chosen part with sliders. Loads come first (antenna, route, engine, fuel), then thermal and power
+// are sized to what everyone else asks of them, then the rocket has to lift the result.
 export const STEPS = [
-  { key: 'comms', label: 'Antenna', role: 'Spacecraft bus', list: PRESETS.comms },
+  { key: 'comms', label: 'Antenna', role: 'Spacecraft bus', list: COMMS_PARTS },
   { key: 'traj', label: 'Route', role: 'Mission plan', list: TRAJECTORIES },
   { key: 'engine', label: 'Engine', role: 'Propulsion', list: ENGINES },
-  { key: 'tank', label: 'Fuel', role: 'Propulsion', list: PRESETS.tank },
-  { key: 'thermal', label: 'Thermal', role: 'Spacecraft bus', list: PRESETS.thermal },
-  { key: 'power', label: 'Power', role: 'Spacecraft bus', list: PRESETS.power },
+  { key: 'tank', label: 'Fuel tank', role: 'Propulsion', list: TANKS },
+  { key: 'thermal', label: 'Thermal', role: 'Spacecraft bus', list: THERMAL_PARTS },
+  { key: 'power', label: 'Power', role: 'Spacecraft bus', list: POWER_PARTS },
   { key: 'launcher', label: 'Rocket', role: 'Launch vehicle', list: LAUNCHERS },
 ];

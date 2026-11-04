@@ -1,10 +1,12 @@
 // Mission Design physics + outcome model. Pure functions, no DOM.
 // Shared by the browser app and scripts/balance.mjs.
 import {
-  G0, STRUCTURE_FRACTION, MASS_GROWTH_MAX, BUS, RTG_HEATER_CREDIT_W, RTG_HOT_FLUX,
-  MARGIN_GREEN, MIN_OPS_YEARS, FLYBYS, DESTINATIONS, CONTRACTS, PAYLOADS, ENGINES,
-  LAUNCHERS, TRAJECTORIES, RANDOM_EVENTS, PARAMS, PRESETS, SOLAR, RTG, BATTERY, THERMAL, COMMS, TANK,
+  G0, STRUCTURE_FRACTION, BUS, MARGIN_GREEN, MIN_OPS_YEARS, FLYBYS, DESTINATIONS, CONTRACTS, PAYLOADS,
+  ENGINES, LAUNCHERS, TANKS, COMMS_PARTS, POWER_PARTS, THERMAL_PARTS, TRAJECTORIES, RANDOM_EVENTS,
+  PARAMS, BATTERY, BATTERY_LIFE, TCM, THERMAL, COMMS,
 } from './data.js';
+import { HERITAGE } from './parts.js';
+import { PAR } from './par.js';
 
 const byId = (list, id) => list.find((x) => x.id === id) || null;
 const CRUISE_ARRAY_DEG = 0.02;
@@ -13,51 +15,52 @@ const n1 = (x) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
 
 export const paramVal = (d, k) => (typeof d[k] === 'number' ? d[k] : PARAMS[k].def);
 
-// ---------- procedural parts: sliders in, mass / cost / performance out ----------
+// ---------- parts: a chosen part type, sized by sliders -> mass / cost / performance ----------
 function powerPart(d, D) {
-  const A = paramVal(d, 'solarArea'); const n = paramVal(d, 'rtgUnits');
-  const kWh = D && D.nightHours ? paramVal(d, 'battery') : BATTERY.defaultKWh;
-  const hasSolar = A > 0; const hasRtg = n > 0;
-  const mass = (hasSolar ? SOLAR.massBase + SOLAR.massPerM2 * A : 0) + n * RTG.mass + BATTERY.massBase + BATTERY.massPerKWh * kWh;
-  const cost = (hasSolar ? SOLAR.costBase + SOLAR.costPerM2 * A : 0) + n * RTG.cost + BATTERY.costBase + BATTERY.costPerKWh * kWh;
-  const life = Math.min(hasSolar ? SOLAR.life : Infinity, hasRtg ? RTG.life : Infinity);
-  const rtgName = `${n} RTG${n > 1 ? 's' : ''}`;
+  const part = byId(POWER_PARTS, d.power) || POWER_PARTS[1];
+  const solar = part.kind === 'solar';
+  const A = solar ? paramVal(d, 'solarArea') : 0; const n = solar ? 0 : paramVal(d, 'rtgUnits');
+  const kWh = D && D.dark ? paramVal(d, 'battery') : BATTERY.defaultKWh;
+  const mass = (solar ? part.massBase + part.massPerM2 * A : n * part.mass) + BATTERY.massBase + BATTERY.massPerKWh * kWh;
+  const cost = (solar ? part.costBase + part.costPerM2 * A : n * part.cost) + BATTERY.costBase + BATTERY.costPerKWh * kWh;
   return {
-    name: hasSolar && hasRtg ? `${n1(A)} m² arrays + ${rtgName}` : hasRtg ? rtgName : `${n1(A)} m² solar arrays`,
-    short: hasSolar && hasRtg ? `${n1(A)} m² + ${n} RTG` : hasRtg ? rtgName : `${n1(A)} m² solar`,
-    type: hasSolar && hasRtg ? 'hybrid' : hasRtg ? 'rtg' : 'solar',
-    hasSolar, hasRtg, solarW: A * SOLAR.wPerM2, rtgUnits: n, rtgW: n * RTG.unitW, decay: RTG.decay,
-    batteryWh: kWh * 1000, mass, cost, life: Number.isFinite(life) ? life : 0,
+    id: part.id, kind: part.kind, name: solar ? `${part.name}, ${n1(A)} m²` : `${n} × ${part.name}`, short: part.name,
+    hasSolar: solar && A > 0, hasRtg: !solar && n > 0, solarW: A * (part.wPerM2 || 0), solarDeg: part.deg || 1,
+    rtgUnits: n, rtgW: n * (part.unitW || 0), decay: part.decay || 0, rtgHeatW: n * (part.heatW || 0), hotFlux: n * (part.hotFlux || 0),
+    batteryWh: kWh * 1000, mass, cost, life: part.life, heritage: part.heritage,
   };
 }
 
 function thermalPart(d) {
+  const part = byId(THERMAL_PARTS, d.thermal) || THERMAL_PARTS[1];
   const R_ = paramVal(d, 'radiator'); const S = paramVal(d, 'shield');
   return {
-    name: `${n1(R_)} m² radiators, ${n1(S)} cm shielding`, short: `${n1(R_)} m² rad · ${n1(S)} cm`,
-    hotLimit: THERMAL.hotBase + THERMAL.hotPerRad * R_,
-    heaterFactor: Math.max(THERMAL.heaterMin, THERMAL.heaterBase + THERMAL.heaterPerRad * R_ - THERMAL.heaterPerShield * S),
-    radTol: THERMAL.radTolBase + THERMAL.radTolPerShield * S,
-    mass: THERMAL.massBase + THERMAL.massPerRad * R_ + THERMAL.massPerShield * S,
-    cost: THERMAL.costBase + THERMAL.costPerRad * R_ + THERMAL.costPerShield * S,
-    life: THERMAL.life - THERMAL.lifePerRad * R_,
+    id: part.id, name: part.name, short: part.name,
+    hotLimit: THERMAL.hotBase + THERMAL.hotPerRad * part.rad.cool * R_,
+    heaterFactor: Math.max(THERMAL.heaterMin, THERMAL.heaterBase + THERMAL.heaterPerRad * part.rad.leak * R_ - THERMAL.heaterPerShield * S),
+    radTol: THERMAL.radTolBase + THERMAL.radTolPerShield * part.shield.tol * S,
+    mass: part.massBase + THERMAL.massPerRad * part.rad.mass * R_ + THERMAL.massPerShield * part.shield.mass * S,
+    cost: part.costBase + THERMAL.costPerRad * part.rad.cost * R_ + THERMAL.costPerShield * part.shield.cost * S,
+    life: part.life - THERMAL.lifePerRad * R_, heritage: part.heritage,
   };
 }
 
 function commsPart(d) {
+  const part = byId(COMMS_PARTS, d.comms) || COMMS_PARTS[1];
   const dish = paramVal(d, 'dish'); const tx = paramVal(d, 'txPower');
   return {
-    name: `${n1(dish)} m dish, ${tx} W`, short: `${n1(dish)} m · ${tx} W`,
-    rateGb: COMMS.rateK * dish * dish * tx, txW: tx, powerW: COMMS.drawPerTxW * tx, heatFlux: COMMS.heatPerTxW * tx,
-    mass: COMMS.massBase + COMMS.massPerD2 * dish * dish + COMMS.massPerTxW * tx,
-    cost: COMMS.costBase + COMMS.costPerD2 * dish * dish + COMMS.costPerTxW * tx,
-    life: COMMS.lifeBase - COMMS.lifePerD * dish,
+    id: part.id, name: part.name, short: part.name,
+    rateGb: COMMS.rateK * part.rate * dish * dish * tx, txW: tx, powerW: COMMS.drawPerTxW * tx, heatFlux: COMMS.heatPerTxW * tx,
+    mass: (COMMS.massBase + COMMS.massPerD2 * dish * dish) * part.mass + COMMS.massPerTxW * tx,
+    cost: (COMMS.costBase + COMMS.costPerD2 * dish * dish) * part.cost + COMMS.costPerTxW * tx,
+    life: COMMS.lifeBase - COMMS.lifePerD * dish + part.life, heritage: part.heritage,
   };
 }
 
 function tankPart(d) {
+  const part = byId(TANKS, d.tank) || TANKS[0];
   const prop = paramVal(d, 'fuel');
-  return { name: `${R(prop)} kg of fuel`, short: `${R(prop)} kg`, prop, mass: TANK.massBase + TANK.massPerKg * prop, cost: TANK.costBase + TANK.costPerKg * prop, life: TANK.life };
+  return { id: part.id, name: `${part.name}, ${R(prop)} kg`, short: part.name, prop, mass: part.massBase + part.massPerKg * prop, cost: part.costBase + part.costPerKg * prop, life: part.life, heritage: part.heritage };
 }
 
 export function parts(d) {
@@ -79,7 +82,9 @@ export function parts(d) {
 }
 
 export function isComplete(d) {
-  return !!(d.contract && d.engine && d.traj && d.launcher && (paramVal(d, 'solarArea') > 0 || paramVal(d, 'rtgUnits') > 0));
+  const pw = byId(POWER_PARTS, d.power);
+  return !!(d.contract && d.engine && d.traj && d.launcher && d.comms && d.thermal && d.tank && pw
+    && (pw.kind === 'solar' ? paramVal(d, 'solarArea') > 0 : paramVal(d, 'rtgUnits') > 0));
 }
 
 // ---------- seeded randomness ----------
@@ -92,35 +97,36 @@ export function mulberry32(a) {
   };
 }
 
-// Launch-day conditions: hidden mass growth and one minor random event.
+// Launch-day conditions: how much of the possible mass growth shows up (0-1), and one minor random event.
+// The growth itself depends on the heritage of the parts (see budgets).
 export function launchConditions(seed, attempt = 1) {
   const rng = mulberry32((seed * 7919 + attempt * 104729) >>> 0);
   rng(); rng();
-  const growth = Math.round(rng() * MASS_GROWTH_MAX * 1000) / 1000;
+  const growthK = Math.round(rng() * 1000) / 1000;
   const event = RANDOM_EVENTS[Math.floor(rng() * RANDOM_EVENTS.length)];
   const eventFrac = 0.15 + rng() * 0.6;
-  return { growth, event, eventFrac };
+  return { growthK, event, eventFrac };
 }
 
-export const NOMINAL = { growth: MASS_GROWTH_MAX / 2, event: null, eventFrac: 0.5 };
-export const ESTIMATE = { growth: 0, event: null, eventFrac: 0.5 };
+export const NOMINAL = { growthK: 0.5, event: null, eventFrac: 0.5 };
+export const ESTIMATE = { growthK: 0, event: null, eventFrac: 0.5 };
 
 // ---------- helpers ----------
 const solarFactor = (D) => Math.min(1 / (D.sunAU * D.sunAU), D.solarCap);
 
 function heaterW(D, P, coldW) {
-  const credit = P.power.rtgUnits * RTG_HEATER_CREDIT_W;
-  return Math.max(0, coldW * P.thermal.heaterFactor - credit);
+  return Math.max(0, coldW * P.thermal.heaterFactor - P.power.rtgHeatW);
 }
 
 // Power from each source t years after launch. Cruise years degrade arrays a little;
-// operations degrade them at the destination's rate. solarScale dims the arrays (dust storm).
+// operations degrade them at the destination's rate. Each array type wears at its own rate.
+// solarScale dims the arrays (dust storm).
 function supplyParts(t, P, cruise, opts, flybyHit = 0, solarScale = 1) {
   const pw = P.power; const D = P.D;
   const f = (opts.event && opts.event.powerFactor) || 1;
   const tc = Math.min(t, cruise); const to = Math.max(0, t - cruise);
   const solar = pw.hasSolar
-    ? pw.solarW * solarFactor(D) * Math.pow(1 - CRUISE_ARRAY_DEG, tc) * Math.pow(1 - D.solarDeg, to) * (1 - flybyHit) * solarScale * f : 0;
+    ? pw.solarW * solarFactor(D) * Math.pow(1 - CRUISE_ARRAY_DEG * pw.solarDeg, tc) * Math.pow(1 - D.solarDeg * pw.solarDeg, to) * (1 - flybyHit) * solarScale * f : 0;
   const rtg = pw.hasRtg ? pw.rtgW * Math.pow(1 - pw.decay, t) * f : 0;
   return { solar, rtg };
 }
@@ -138,7 +144,7 @@ export const STORM_YEARS = 0.1; // how long the Mars dust storm lasts
 // cruise sunshade (about Earth level) until arrival. Plus the Venus flyby spike.
 export function heatAt(t, b) {
   const { P, D, tr } = b;
-  const rtg = P.power.rtgUnits * RTG_HOT_FLUX + P.comms.heatFlux;
+  const rtg = P.power.hotFlux + P.comms.heatFlux;
   let f = t >= tr.cruise ? D.hotFlux : Math.min(1, Math.pow(D.hotFlux, t / tr.cruise));
   if (tr.flyby === 'venus' && Math.abs(t - tr.flybyYear) <= FLYBY_WIDTH) f = Math.max(f, FLYBYS.venus.flux);
   return f + rtg;
@@ -160,7 +166,7 @@ export function powerAt(t, b) {
   const f = (opts.event && opts.event.powerFactor) || 1;
   const hit = tr.flyby && t >= tr.flybyYear ? FLYBYS[tr.flyby].arrayHit : 0;
   if (t < tr.cruise) {
-    const solar = pw.hasSolar ? pw.solarW * Math.pow(solarFactor(D), t / tr.cruise) * Math.pow(1 - CRUISE_ARRAY_DEG, t) * (1 - hit) * f : 0;
+    const solar = pw.hasSolar ? pw.solarW * Math.pow(solarFactor(D), t / tr.cruise) * Math.pow(1 - CRUISE_ARRAY_DEG * pw.solarDeg, t) * (1 - hit) * f : 0;
     const rtg = pw.hasRtg ? pw.rtgW * Math.pow(1 - pw.decay, t) * f : 0;
     return solar + rtg;
   }
@@ -194,7 +200,12 @@ export function budgets(d, opts = ESTIMATE) {
   const sub = BUS.mass + subs.reduce((s, p) => s + (p ? p.mass : 0), 0);
   r.structure = sub * STRUCTURE_FRACTION;
   r.dryEst = sub + r.structure;
-  r.dry = r.dryEst * (1 + (opts.growth || 0));
+  // Hidden growth at launch: how much heavier than planned the hardware comes out depends on how
+  // proven each part is (weighted by its mass); launch day decides how much of it shows up.
+  const items = [[BUS.mass, 'proven'], ...subs.filter(Boolean).map((p) => [p.mass, p.heritage || 'proven'])];
+  r.growthMax = items.reduce((x, [m, h]) => x + m * HERITAGE[h].growth, 0) / items.reduce((x, [m]) => x + m, 0);
+  r.growth = (opts.growthK || 0) * r.growthMax;
+  r.dry = r.dryEst * (1 + r.growth);
   r.prop = P.tank.prop;
   r.wet = r.dry + r.prop;
   r.cap = P.launcher && tr ? launchCapacity(P.launcher, tr.c3) : null;
@@ -211,7 +222,7 @@ export function budgets(d, opts = ESTIMATE) {
   if (P.engine && tr) {
     r.dvAvail = P.engine.isp * (ev.ispFactor || 1) * G0 * Math.log(r.wet / r.dry);
     r.dvPenalty = P.engine.lowThrust ? D.lowThrustPenalty : 1;
-    r.dvReq = tr.dv * r.dvPenalty + (ev.extraDv || 0);
+    r.dvReq = (tr.dv + TCM.base + TCM.frac * tr.dv) * r.dvPenalty * (P.engine.dvMult || 1) + (ev.extraDv || 0);
     r.dvMargin = (r.dvAvail - r.dvReq) / r.dvReq;
   } else { r.dvAvail = r.dvReq = r.dvMargin = null; }
 
@@ -242,7 +253,7 @@ export function budgets(d, opts = ESTIMATE) {
 
   // Thermal (hot side; cold side shows up as heater power)
   if (D) {
-    r.hotFlux = D.hotFlux + P.power.rtgUnits * RTG_HOT_FLUX + P.comms.heatFlux;
+    r.hotFlux = D.hotFlux + P.power.hotFlux + P.comms.heatFlux;
     r.hotLimit = P.thermal.hotLimit;
     r.thermalMargin = (r.hotLimit - r.hotFlux) / r.hotLimit;
   } else { r.thermalMargin = null; }
@@ -264,11 +275,27 @@ export function budgets(d, opts = ESTIMATE) {
   r.budget = C ? C.budget : null;
   r.costMargin = C ? (C.budget - r.cost) / C.budget : null;
 
+  // Dark periods (nights and eclipses) run on the battery. It may only be discharged to a limit, and
+  // the deeper it is cycled the sooner it wears out. An RTG keeps supplying through the dark.
+  if (D && D.dark) {
+    const dk = D.dark;
+    const rtgW = P.power.hasRtg ? supplyParts(r.years || 1, P, r.cruise || 0, opts).rtg : 0;
+    r.nightLoad = BUS.survivalW + heaterW(D, P, D.coldW) + dk.ops * ((P.payload ? P.payload.powerW : 0) + P.comms.powerW);
+    r.nightNeedWh = Math.max(0, r.nightLoad - rtgW) * dk.hours;
+    r.batteryWh = P.power.batteryWh;
+    r.usableWh = r.batteryWh * BATTERY_LIFE.dodMax;
+    r.dod = r.nightNeedWh / r.batteryWh;
+    r.darkMargin = r.nightNeedWh === 0 ? 1 : (r.usableWh - r.nightNeedWh) / r.nightNeedWh;
+    r.batteryCycles = Math.min(BATTERY_LIFE.maxCycles, Math.max(BATTERY_LIFE.minCycles, BATTERY_LIFE.baseCycles * Math.pow(BATTERY_LIFE.refDod / Math.max(r.dod, 0.05), BATTERY_LIFE.exponent)));
+    r.batteryYears = r.batteryCycles / dk.cyclesPerYr;
+  }
+
   // Design life vs mission years
   if (tr) {
     const checks = [];
     for (const key of ['payload', 'power', 'thermal', 'comms']) if (P[key]) checks.push({ key, part: P[key], need: r.years });
     if (P.engine) checks.push({ key: 'engine', part: P.engine, need: tr.cruise });
+    if (D.dark) checks.push({ key: 'battery', part: { name: 'Battery', life: r.batteryYears }, need: D.opsYears, offset: tr.cruise });
     r.lifeChecks = checks.map((c) => ({ ...c, margin: (c.part.life - c.need) / c.need }));
     r.weakest = r.lifeChecks.reduce((a, b2) => (!a || b2.margin < a.margin ? b2 : a), null);
     r.lifeMargin = r.weakest ? r.weakest.margin : null;
@@ -278,7 +305,7 @@ export function budgets(d, opts = ESTIMATE) {
   if (tr && tr.flyby) {
     const fb = FLYBYS[tr.flyby];
     if (tr.flyby === 'venus') {
-      r.flybyFlux = fb.flux + P.power.rtgUnits * RTG_HOT_FLUX + P.comms.heatFlux;
+      r.flybyFlux = fb.flux + P.power.hotFlux + P.comms.heatFlux;
       r.flybyMargin = (P.thermal.hotLimit - r.flybyFlux) / P.thermal.hotLimit;
     } else {
       r.flybyDose = D.cruiseDosePerYr * tr.flybyYear + fb.dose + (ev.dose || 0);
@@ -290,12 +317,7 @@ export function budgets(d, opts = ESTIMATE) {
   r.hazardMargin = null;
   if (D) {
     if (D.id === 'moon') {
-      const night = BUS.survivalW + heaterW(D, P, D.coldW);
-      const rtgW = P.power.hasRtg ? supplyParts(r.years || 1, P, r.cruise || 0, opts).rtg : 0;
-      r.nightLoad = night;
-      r.nightNeedWh = Math.max(0, night - rtgW) * D.nightHours;
-      r.batteryWh = P.power.batteryWh;
-      r.hazardMargin = r.nightNeedWh === 0 ? 1 : (r.batteryWh - r.nightNeedWh) / r.nightNeedWh;
+      r.hazardMargin = r.darkMargin;
     } else if (D.id === 'mars') {
       const cruise = tr ? tr.cruise : 0;
       const s = supplyParts(cruise + D.stormYear, P, cruise, opts, 0, D.stormFactor);
@@ -352,8 +374,11 @@ export function simulate(d, opts = NOMINAL) {
   if (opts.event) events.push({ t: cruise * opts.eventFrac, phase: 'cruise', kind: 'random', text: opts.event.text });
   for (const c of b.lifeChecks) {
     if (c.part.life < c.need) {
-      const phase = c.part.life < cruise ? 'cruise' : 'ops';
-      fail(c.part.life, phase, 'life', `${c.part.name} reached its ${n1(c.part.life)}-year design life and failed.`, { lifePart: c });
+      const t = (c.offset || 0) + c.part.life; // the battery only ages once operations start
+      const text = c.key === 'battery'
+        ? `Battery wore out: ${R(b.batteryCycles)} cycles at ${R(b.dod * 100)}% depth of discharge, ${R(D.dark.cyclesPerYr * D.opsYears)} needed.`
+        : `${c.part.name} reached its ${n1(c.part.life)}-year design life and failed.`;
+      fail(t, t < cruise ? 'cruise' : 'ops', 'life', text, { lifePart: c });
     }
   }
   // Radiation: dose accumulates linearly, plus flyby spike
@@ -385,9 +410,9 @@ export function simulate(d, opts = NOMINAL) {
     const t = findFirst(cruise, end, allShort);
     fail(t, 'ops', 'freeze', `Froze: no power left for ${R(b.heater)} W of heaters.`, { supply: supplyAt(t, P, cruise, opts, hit) });
   }
-  if (D.id === 'moon') {
-    events.push({ t: cruise + 0.04, phase: 'ops', kind: 'hazard', text: 'Lunar night' });
-    if (b.hazardMargin < 0) fail(cruise + 0.04, 'ops', 'night', `Lunar night: needed ${(b.nightNeedWh / 1000).toFixed(1)} kWh, battery holds ${(b.batteryWh / 1000).toFixed(1)} kWh.`);
+  if (D.dark) {
+    events.push({ t: cruise + 0.04, phase: 'ops', kind: 'hazard', text: D.dark.label });
+    if (b.darkMargin < 0) fail(cruise + 0.04, 'ops', 'night', `${D.dark.label}: needed ${(b.nightNeedWh / 1000).toFixed(1)} kWh, the battery can give ${(b.usableWh / 1000).toFixed(1)} kWh.`);
   }
   if (D.id === 'mars') {
     events.push({ t: cruise + D.stormYear, phase: 'ops', kind: 'hazard', text: 'Global dust storm' });
@@ -411,7 +436,7 @@ export function budgetMargins(b) {
     rad: min(b.radMargin, b.tr.flyby === 'jupiter' ? b.flybyMargin : null),
     data: b.dataMargin, time: b.timeMargin, cost: b.costMargin, mass: b.massMargin, dv: b.dvMargin, life: b.lifeMargin,
   };
-  if (b.D.id === 'moon') m.night = b.hazardMargin;
+  if (b.D.dark) m.night = b.darkMargin;
   return m;
 }
 
@@ -461,7 +486,7 @@ export function explain(d, res) {
   const f = res.failure; if (!f) return [];
   const b = res.b; const { P, D, tr, C } = b;
   const trLabel = d.traj === 'assist' ? `Assist (${tr.label})` : 'Direct trajectory';
-  const growthPct = R((res.opts.growth || 0) * 100);
+  const growthPct = R((res.b.growth || 0) * 100);
   const chains = [];
   const est = budgets(d, ESTIMATE);
   const heavy = massDrivers(b).slice(0, 2).map((x) => `${x.name} (${R(x.mass)} kg)`);
@@ -495,7 +520,7 @@ export function explain(d, res) {
       }
       const c = [];
       if (heavy.length) c.push(`${heavy.join(' + ')}`);
-      c.push(`Dry mass ${R(b.dry)} kg (incl. ${R(b.structure * (1 + res.opts.growth))} kg structure)`);
+      c.push(`Dry mass ${R(b.dry)} kg (incl. ${R(b.structure * (1 + b.growth))} kg structure)`);
       c.push(`${R(b.prop)} kg of fuel + ${P.engine.name} (Isp ${P.engine.isp} s) -> ${R(b.dvAvail)} m/s`);
       if (b.dvPenalty > 1) c.push(`Low thrust: needs ${b.dvPenalty}x more delta-v to capture`);
       c.push(`Needed ${R(b.dvReq)} m/s -> short by ${R(b.dvReq - b.dvAvail)} m/s -> missed orbit insertion`);
@@ -528,7 +553,7 @@ export function explain(d, res) {
     }
     case 'overheat': {
       const c = [`${D.name}: ${D.hotFlux}x Earth sunlight`];
-      if (units) c.push(`RTG waste heat adds +${n1(units * RTG_HOT_FLUX)}x`);
+      if (units) c.push(`RTG waste heat adds +${n1(P.power.hotFlux)}x`);
       c.push(`${P.comms.txW} W transmitter's amplifier adds +${P.comms.heatFlux.toFixed(2)}x`);
       c.push(`${n1(paramVal(d, 'radiator'))} m² of radiators reject ${n1(P.thermal.hotLimit)}x`, 'Overheated on arrival');
       chains.push(c);
@@ -537,7 +562,7 @@ export function explain(d, res) {
     case 'flyby': {
       if (tr.flyby === 'venus') {
         const c = [`${trLabel} -> pass Venus at 0.7 AU`, `Sunlight ${FLYBYS.venus.flux}x Earth`];
-        if (units) c.push(`+ RTG waste heat ${n1(units * RTG_HOT_FLUX)}x`);
+        if (units) c.push(`+ RTG waste heat ${n1(P.power.hotFlux)}x`);
         c.push(`+ transmitter amplifier ${P.comms.heatFlux.toFixed(2)}x`);
         c.push(`Radiators reject ${n1(P.thermal.hotLimit)}x -> overheated in year ${fmtYr(tr.flybyYear, true)}`);
         chains.push(c);
@@ -566,19 +591,20 @@ export function explain(d, res) {
         if (dir.cap != null && dir.massMargin < 0) steps.push(`(Direct would overload the ${P.launcher.name})`);
         else steps.push('launcher kept small (saved $)');
       } else steps.push('Direct trajectory');
-      steps.push(`${fmtYr(c.need)} ${c.key === 'engine' ? 'until arrival burn' : 'mission'}`);
+      steps.push(`${fmtYr(c.need)} ${c.key === 'engine' ? 'until arrival burn' : c.key === 'battery' ? `of operations, ${R(D.dark.cyclesPerYr)} dark periods a year at ${R(b.dod * 100)}% depth of discharge` : 'mission'}`);
       steps.push(`${c.part.name} design life ${n1(c.part.life)} yr`);
       steps.push(`Failed in year ${Math.ceil(c.part.life + 0.001)}`);
       chains.push(steps);
       break;
     }
     case 'night': {
+      const dk = D.dark;
       chains.push([
-        'Lunar night: 14 days, no sun',
-        `Survival load: bus ${BUS.survivalW} W + heaters ${R(b.nightLoad - BUS.survivalW)} W`,
-        `x 336 h = ${(b.nightNeedWh / 1000).toFixed(1)} kWh`,
-        `Battery holds ${(b.batteryWh / 1000).toFixed(1)} kWh`,
-        'Battery dead -> froze on night 1',
+        `${dk.label}: ${dk.hours >= 72 ? `${R(dk.hours / 24)} days` : `${n1(dk.hours)} hours`} with no sun`,
+        `Load in the dark: ${R(b.nightLoad)} W (bus, heaters${dk.ops ? `, ${R(dk.ops * 100)}% of instrument and radio` : ''})`,
+        `x ${n1(dk.hours)} h = ${(b.nightNeedWh / 1000).toFixed(1)} kWh`,
+        `Battery ${(b.batteryWh / 1000).toFixed(1)} kWh, usable to ${R(BATTERY_LIFE.dodMax * 100)}% = ${(b.usableWh / 1000).toFixed(1)} kWh`,
+        'Battery ran down -> lost power in the dark',
       ]);
       break;
     }
@@ -642,31 +668,49 @@ export function teamCode(d, seed, attempt) {
   return `${D.code}-${code}`;
 }
 
-// ---------- design space for the balance test, the par cost and the debug helper ----------
-// Every combination of the chunky choices a team can make. `changed` plays the amended contract.
+// ---------- design space for the balance test and the par cost ----------
+// Every part type, at a few sizes each. The app's sliders are continuous; this grid samples them.
+// `changed` plays the amended contract.
+const uniq = (xs) => [...new Set(xs)];
+const r1 = (x) => Math.round(x * 10) / 10;
+
 export function* designGrid(contractId, changed = false) {
-  for (const c of PRESETS.comms) for (const t of PRESETS.thermal) for (const p of PRESETS.power) for (const k of PRESETS.tank)
-    for (const engine of ENGINES) for (const traj of TRAJECTORIES) for (const launcher of LAUNCHERS) {
-      yield {
-        contract: contractId, changed, ...c.set, ...t.set, ...p.set, ...k.set,
-        comms: c.id, thermal: t.id, power: p.id, tank: k.id, engine: engine.id, traj: traj.id, launcher: launcher.id,
-      };
+  const C = byId(CONTRACTS, contractId); const D = byId(DESTINATIONS, C.dest);
+  const batteries = D.dark ? [2, 6, 20] : [PARAMS.battery.def];
+  const base = { contract: contractId, changed };
+  for (const c of COMMS_PARTS) for (const dish of uniq([c.def.dish, Math.min(c.range.dish[1], r1(c.def.dish * 2))])) {
+    const commsKnobs = { comms: c.id, dish, txPower: c.def.txPower };
+    for (const p of POWER_PARTS) {
+      const sizes = p.kind === 'solar' ? uniq([p.def.solarArea, Math.min(p.range.solarArea[1], p.def.solarArea * 3)]) : uniq([p.def.rtgUnits, Math.min(p.range.rtgUnits[1], p.def.rtgUnits + 1)]);
+      for (const size of sizes) for (const battery of batteries) {
+        const powerKnobs = { power: p.id, solarArea: p.kind === 'solar' ? size : 0, rtgUnits: p.kind === 'solar' ? 0 : size, battery };
+        for (const t of THERMAL_PARTS) for (const [radiator, shield] of uniq([`${t.def.radiator},${t.def.shield}`, '8,1', '1,8']).map((s) => s.split(',').map(Number))) {
+          const thermalKnobs = { thermal: t.id, radiator, shield };
+          for (const k of TANKS) for (const fuel of [400, 1000]) for (const engine of ENGINES) for (const traj of TRAJECTORIES) for (const launcher of LAUNCHERS) {
+            yield { ...base, ...commsKnobs, ...powerKnobs, ...thermalKnobs, tank: k.id, fuel, engine: engine.id, traj: traj.id, launcher: launcher.id };
+          }
+        }
+      }
     }
+  }
 }
 
 export function cheapestFull(contractId, opts = NOMINAL, changed = false) {
   let best = null;
   for (const d of designGrid(contractId, changed)) {
     const r = simulate(d, opts);
-    if (r.outcome === 'full' && (!best || r.cost < best.cost)) best = { d, cost: r.cost, r };
+    if (r.outcome === 'full' && (!best || r.cost < best.cost)) best = { d, cost: r.cost };
   }
   return best;
 }
 
-// Par cost: the cheapest full success there is. Cached because the app asks on every result.
-const PAR = new Map();
+// Par cost and par design: the cheapest full success. Precomputed (par.js), because searching the
+// whole design space takes seconds; the balance test fails if par.js is out of date.
 export function par(contractId, changed = false) {
-  const k = `${contractId}${changed ? '*' : ''}`;
-  if (!PAR.has(k)) { const b = cheapestFull(contractId, NOMINAL, changed); PAR.set(k, b ? Math.round(b.cost) : null); }
-  return PAR.get(k);
+  const e = PAR[contractId]; const x = e && (changed ? e.amended : e.base);
+  return x ? x.cost : null;
+}
+export function parDesign(contractId, changed = false) {
+  const e = PAR[contractId]; const x = e && (changed ? e.amended : e.base);
+  return x ? { ...x.design } : null;
 }

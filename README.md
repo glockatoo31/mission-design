@@ -5,6 +5,18 @@ space mission, launch it, and usually fail the first time. The anomaly report tr
 failure back through the coupling chain to the team's own choices. Round 2 is a 3-5 minute
 redesign.
 
+Flow: destination, then one screen per design choice (science, power, thermal, antenna,
+route, engine, tank, launcher), then review and launch. Each choice screen first explains the
+design consideration for the chosen destination (e.g. "Power at Pluto"), then shows the options.
+
+- **Attempt 1:** no budgets and no Back button. The team commits, launches, and (usually) fails.
+  The anomaly report shows the graph of the budget that broke.
+- **Attempt 2+:** Back is allowed, and budgets appear as graphs over mission time: power
+  available vs needed, heat vs thermal limit, radiation dose, data sent vs goal, money spent vs
+  budget, mass vs launcher, delta-v vs the arrival burn, part life vs mission length (and the
+  battery through the lunar night for the Moon). A row of chips at the top shows every budget's
+  status; tap one to add its graph.
+
 Static, client-only (Vite + vanilla JS). No backend, no accounts, no network calls after load.
 
 ## Run locally
@@ -106,14 +118,14 @@ Score = science points (100 = data goal, capped at 150) × destination multiplie
 Before class, on 3-4 phones (or 3-4 browser tabs, at least one on a real phone):
 
 - [ ] Open the URL (via QR code) on every phone. Screen 1 shows 5 destinations with multiplier, hazard, minimum and full goals.
-- [ ] Tap targets are easy to hit; nothing is cut off at phone width; the live strip stays pinned on screens 2-4.
-- [ ] On screens 2-4, every tap updates the strip and shows +/− badges (e.g. pick the Hi-res imager: Mass goes up, Power goes down, Cost goes up).
-- [ ] A gauge turns red when a limit is broken (e.g. Europa + small solar → Power red).
-- [ ] Screen 4 budget box shows parts + launcher + ops; going over budget shows a warning.
-- [ ] Screen 5 review shows green/yellow/red rows including Design life and Flyby hazard; over-budget designs cannot launch.
+- [ ] Attempt 1: each choice screen shows the consideration text then options; no Back button, no budgets, and the review is a parts list. An over-budget design can launch and is cancelled at program review.
+- [ ] Attempt 1 failure: the anomaly report includes the graph of the broken budget, and a "Budgets unlocked" note.
+- [ ] Attempt 2: Back works; the budget chips stay pinned; every tap updates the graphs and chips (e.g. Pluto: small solar → Power red, RTG → Power green).
+- [ ] Touch a graph: a crosshair and readout appear.
+- [ ] Attempt 2 review shows every budget graph; over-budget designs cannot launch.
 - [ ] Launch runs ~30 s: liftoff, cruise year bar with event markers, arrival burn, operations. A failure stops the animation.
 - [ ] Results show tier, score, cost and a team code; failures show an anomaly report with a cause chain and numbers.
-- [ ] "Redesign" returns to screen 2 with all choices kept and "Attempt 2" in the header.
+- [ ] "Redesign" returns to the science screen with all choices kept and "Attempt 2" in the header.
 - [ ] **Seed test:** open `?seed=5` on two phones, build the identical design, launch: both get the same outcome, random event and team code. Open `?seed=6` on a third with the same design: the random event may differ.
 - [ ] **Debug test:** open `?debug`, pick a destination, Next through to launch: parts are auto-picked and the launch result appears instantly. Try "Cheapest full success" to see a passing design.
 - [ ] Refresh mid-build: choices are kept. Refresh after a launch: the result shows again without replaying.
@@ -123,5 +135,7 @@ Before class, on 3-4 phones (or 3-4 browser tabs, at least one on a real phone):
 
 - `src/data.js`: every tunable number (destinations, parts, launchers, events).
 - `src/model.js`: physics, launch simulation, anomaly chains. No DOM; shared with the balance script.
-- `src/main.js`, `src/style.css`: the six screens.
+- `src/considerations.js`: the per-destination design consideration text for each choice screen.
+- `src/charts.js`: budget graphs over mission time (data from `model.js`, rendered as SVG).
+- `src/main.js`, `src/style.css`: the screens.
 - `scripts/balance.mjs`: the balance test.

@@ -27,21 +27,6 @@ h2 { font-size: 1.1rem; margin: 0; }
 .dots i { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }
 .dots i.on { background: var(--accent); }
 
-/* live strip */
-.strip { position: sticky; top: 74px; z-index: 15; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 8px 10px; background: rgba(11, 16, 32, .97); border-bottom: 1px solid var(--line); }
-.gauge { background: var(--panel); border-radius: 10px; padding: 6px 8px; border: 2px solid transparent; min-width: 0; }
-.gauge.green { border-color: rgba(46, 204, 113, .5); }
-.gauge.yellow { border-color: var(--yellow); }
-.gauge.red { border-color: var(--red); background: #3a1420; }
-.g-top { display: flex; justify-content: space-between; align-items: center; gap: 4px; }
-.g-label { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-.g-val { font-size: 1.05rem; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gauge.red .g-val { color: var(--red); }
-.g-sub { font-size: .7rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.delta { font-size: .7rem; font-weight: 700; padding: 0 5px; border-radius: 6px; white-space: nowrap; animation: pop .5s ease-out; }
-.delta.good { background: rgba(46, 204, 113, .2); color: var(--green); }
-.delta.bad { background: rgba(255, 77, 94, .2); color: var(--red); }
-.delta.neutral { background: var(--panel2); color: var(--muted); }
 @keyframes pop { 0% { transform: scale(1.6); } 100% { transform: scale(1); } }
 
 /* destination cards */
@@ -162,7 +147,74 @@ h2 { font-size: 1.1rem; margin: 0; }
 .end-actions { display: grid; gap: 10px; margin-top: 16px; }
 
 @media (min-width: 640px) {
-  .strip { grid-template-columns: repeat(6, 1fr); top: 70px; }
   .opts { grid-template-columns: repeat(3, 1fr); }
   .dests { grid-template-columns: 1fr 1fr; }
+}
+
+/* ---------- consideration screens ---------- */
+:root { --ink2: #9aa5c8; }
+.consider { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin-top: 8px; }
+.consider h1 { margin-top: 8px; }
+.consider h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); margin: 14px 0 4px; }
+.consider .why { margin: 6px 0 0; line-height: 1.45; }
+.here { margin: 0; padding-left: 18px; display: grid; gap: 6px; line-height: 1.4; }
+.ask { margin: 14px 0 0; padding: 10px 12px; background: var(--panel2); border-left: 4px solid var(--accent); border-radius: 8px; font-weight: 700; }
+.pick-h { margin: 20px 0 8px; }
+.lock { align-self: center; color: var(--muted); font-size: .8rem; max-width: 45%; }
+.unlock { margin-top: 14px; background: #10263f; border-left: 4px solid var(--accent); padding: 10px 12px; border-radius: 8px; line-height: 1.4; }
+.picks summary { cursor: pointer; color: var(--muted); margin: 14px 0 8px; }
+
+/* health chips (attempt 2+) */
+.health { position: sticky; top: 74px; z-index: 15; display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 10px; background: rgba(11, 16, 32, .97); border-bottom: 1px solid var(--line); }
+.hchip { display: inline-flex; align-items: center; gap: 5px; background: var(--panel); border: 2px solid var(--line); border-radius: 999px; padding: 4px 9px; font-size: .78rem; font-weight: 700; cursor: pointer; }
+.hchip i { font-style: normal; font-weight: 900; }
+.hchip.green { border-color: rgba(46, 204, 113, .55); } .hchip.green i { color: var(--green); }
+.hchip.yellow { border-color: var(--yellow); } .hchip.yellow i { color: var(--yellow); }
+.hchip.red { border-color: var(--red); background: #3a1420; } .hchip.red i { color: var(--red); }
+.hchip.open { box-shadow: 0 0 0 2px var(--accent); }
+.hchip.flash { animation: pop .6s ease-out; }
+
+/* charts */
+.graphs { margin-top: 22px; }
+.graphs .note { margin: 2px 0 8px; }
+.chart-grid { display: grid; gap: 10px; margin-top: 10px; }
+.chart { margin: 0; background: var(--panel); border: 2px solid var(--line); border-radius: var(--radius); padding: 10px 12px 8px; text-align: left; }
+.chart.st-red { border-color: rgba(255, 77, 94, .7); }
+.chart.st-yellow { border-color: rgba(245, 197, 24, .6); }
+.anomaly .chart { margin: 6px 0 10px; background: var(--bg); }
+.c-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.sbadge { font-size: .72rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.sbadge.ok { background: rgba(46, 204, 113, .18); color: var(--green); }
+.sbadge.thin { background: rgba(245, 197, 24, .18); color: var(--yellow); }
+.sbadge.bad { background: rgba(255, 77, 94, .2); color: var(--red); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: .75rem; color: var(--muted); margin-top: 4px; }
+.legend i, .tip i { display: inline-block; width: 16px; height: 0; border-top: 2px solid var(--c); vertical-align: middle; margin-right: 5px; }
+.legend i.dash, .tip i.dash { border-top-style: dashed; }
+.plot { position: relative; }
+.plot svg { display: block; width: 100%; height: auto; overflow: visible; touch-action: pan-y; }
+.c-cap { color: var(--muted); font-size: .8rem; margin: 4px 0 0; line-height: 1.35; }
+.chart svg .band { fill: rgba(255, 255, 255, .035); }
+.chart svg .bandlbl { fill: var(--muted); font-size: 9px; }
+.chart svg .grid { stroke: var(--line); stroke-width: 1; }
+.chart svg .ytick { fill: var(--muted); font-size: 9.5px; text-anchor: end; }
+.chart svg .xtick { fill: var(--muted); font-size: 9.5px; text-anchor: middle; }
+.chart svg .xunit { fill: var(--muted); font-size: 9px; }
+.chart svg .ser { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart svg .ser.dash { stroke-dasharray: 5 4; stroke-width: 1.6; }
+.chart svg .limit { stroke: var(--text); stroke-width: 1.2; stroke-dasharray: 3 3; opacity: .7; }
+.chart svg .limlbl { fill: var(--text); font-size: 9.5px; font-weight: 600; }
+.chart svg .mkr { fill: var(--panel); stroke: var(--text); stroke-width: 1.6; }
+.chart svg .mkr.bad { stroke: var(--red); }
+.chart svg .failpt { fill: var(--red); stroke: var(--panel); stroke-width: 2; }
+.chart svg .faillbl { fill: var(--text); font-size: 10px; font-weight: 800; }
+.chart svg .gap { fill: none; stroke: var(--red); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.chart svg .need { stroke: var(--text); stroke-width: 1.5; }
+.chart svg .xhair { stroke: var(--muted); stroke-width: 1; }
+.chart svg .hit { fill: transparent; cursor: crosshair; }
+.tip { position: absolute; top: 4px; background: rgba(11, 16, 32, .95); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: .75rem; pointer-events: none; white-space: nowrap; z-index: 2; }
+.tip-t { color: var(--muted); margin-bottom: 2px; }
+@media (min-width: 640px) {
+  .health { top: 70px; }
+  .chart-grid { grid-template-columns: 1fr 1fr; }
+  .anomaly .chart-grid, .chart.big { grid-column: 1 / -1; }
 }

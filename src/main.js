@@ -1,87 +1,85 @@
 import './style.css';
 import { DESTINATIONS, SLOTS, FLYBYS, LAUNCHERS } from './data.js';
 import {
-  budgets, simulate, explain, marginColor, launchConditions, teamCode, ESTIMATE,
+  budgets, simulate, explain, launchConditions, teamCode, ESTIMATE,
   isComplete, cheapestFull, allDesigns, mulberry32, launchCapacity, fmtYr, fmtGb,
 } from './model.js';
+import { consideration } from './considerations.js';
+import {
+  buildCharts, renderChart, resetCharts, attachHover, chartForFailure, statusBadge, CHART_ORDER, CHART_LABEL,
+} from './charts.js';
 
 // ---------- flags + state ----------
 const params = new URLSearchParams(location.search);
 const DEBUG = params.has('debug');
 const URL_SEED = params.has('seed') ? Math.abs(parseInt(params.get('seed'), 10)) || 1 : null;
-const STORE = 'mission-design-v1';
-const SCREENS = ['Destination', 'Payload', 'Spacecraft', 'Launch plan', 'Review', 'Launch'];
+const STORE = 'mission-design-v2';
+
+// One screen per design choice. Trajectory comes before the engine, tank, and
+// launcher because all three depend on the route.
+const FLOW = ['dest', 'payload', 'power', 'thermal', 'comms', 'traj', 'engine', 'tank', 'launcher', 'review', 'launch'];
+const SLOT = Object.fromEntries(SLOTS.map((s) => [s.key, s]));
+const STEP_NAME = { dest: 'Destination', review: 'Review', launch: 'Launch' };
+const stepName = (k) => STEP_NAME[k] || SLOT[k].label;
+
+// Which budget graphs each choice moves the most.
+const SLOT_CHARTS = {
+  payload: ['data', 'power', 'mass'],
+  power: ['power', 'night', 'mass'],
+  thermal: ['thermal', 'rad', 'power'],
+  comms: ['data', 'power'],
+  traj: ['cost', 'life', 'mass'],
+  engine: ['dv', 'power', 'life'],
+  tank: ['dv', 'mass'],
+  launcher: ['mass', 'cost'],
+};
 
 const blank = () => ({ dest: null, payload: null, power: null, thermal: null, comms: null, engine: null, tank: null, launcher: null, traj: null });
-const fresh = () => ({ screen: 1, design: blank(), attempt: 1, seed: URL_SEED ?? 1000 + Math.floor(Math.random() * 9000), history: [] });
+const fresh = () => ({ step: 0, design: blank(), attempt: 1, seed: URL_SEED ?? 1000 + Math.floor(Math.random() * 9000), history: [], open: [] });
 
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE));
-    if (!s || !s.design) return null;
+    if (!s || !s.design || typeof s.step !== 'number') return null;
     if (URL_SEED != null && s.seed !== URL_SEED) return null;
+    s.open = s.open || [];
     return s;
   } catch { return null; }
 }
 let state = load() || fresh();
-let deltas = null; // last selection's effect on the live strip
+let lastStatus = null; // budget colors before the last pick, to flash what changed
 let anim = null; // running launch animation handle
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* private mode */ } };
 
 const $app = document.getElementById('app');
+attachHover($app);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const R = Math.round;
-const signed = (x, unit = '', digits = 0) => `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(digits)}${unit}`;
 const dest = () => DESTINATIONS.find((d) => d.id === state.design.dest);
+const key = () => FLOW[state.step];
 
-// ---------- live strip ----------
-function stripMetrics(d) {
-  if (!d.dest) return null;
-  const dd = { ...d, traj: d.traj || 'direct' };
-  const b = budgets(dd, ESTIMATE);
-  const m = {};
-  m.mass = { label: 'Mass', v: b.wet, text: `${R(b.wet)} kg`, sub: b.cap != null ? `lift ${R(b.cap)}` : 'no launcher yet', state: b.cap == null ? 'none' : marginColor(b.massMargin), better: -1, unit: ' kg' };
-  if (b.powerMargin != null) {
-    let spare = b.supplyEnd - b.load;
-    if (b.ionMargin != null) spare = Math.min(spare, b.supplyArrive - b.ionLoad);
-    const pm = b.ionMargin != null ? Math.min(b.powerMargin, b.ionMargin) : b.powerMargin;
-    m.power = { label: 'Power', v: spare, text: `${signed(spare)} W`, sub: 'spare at end', state: marginColor(pm), better: 1, unit: ' W' };
-  } else m.power = { label: 'Power', v: null, text: '—', sub: 'pick power', state: 'none' };
-  m.cost = { label: 'Cost', v: b.cost, text: `$${R(b.cost)}M`, sub: `of $${b.budget}M`, state: marginColor(b.costMargin), better: -1, unit: 'M', money: true };
-  if (b.dvMargin != null) m.dv = { label: 'Delta-v', v: b.dvAvail - b.dvReq, text: `${signed(b.dvAvail - b.dvReq)}`, sub: 'm/s spare', state: marginColor(b.dvMargin), better: 1, unit: ' m/s' };
-  else m.dv = { label: 'Delta-v', v: null, text: '—', sub: 'pick engine+tank', state: 'none' };
-  if (b.dataMargin != null) { const p = (100 * b.returnable) / b.D.fullGb; m.data = { label: 'Data', v: p, text: `${p >= 999 ? '999+' : R(p)}%`, sub: 'of goal', state: marginColor(b.dataMargin), better: 1, unit: '%' }; }
-  else m.data = { label: 'Data', v: null, text: '—', sub: 'pick payload+antenna', state: 'none' };
-  m.years = { label: 'Duration', v: b.years, text: fmtYr(b.years), sub: d.traj ? b.tr.label : 'if Direct', state: 'neutral', better: 0, unit: ' yr', digits: 1 };
-  return m;
+// First attempt: no budgets and no going back. Commit, launch, learn from the failure.
+const showBudgets = () => state.attempt > 1;
+const canGoBack = () => state.attempt > 1;
+
+// ---------- budget health row + graphs ----------
+function charts() { return isComplete(state.design) ? buildCharts(state.design, ESTIMATE) : null; }
+
+function healthRow(ch) {
+  if (!ch) return '';
+  const keys = CHART_ORDER.filter((k) => ch[k]);
+  return `<div class="health">${keys.map((k) => {
+    const s = ch[k].status;
+    const changed = lastStatus && lastStatus[k] && lastStatus[k] !== s;
+    return `<button class="hchip ${s} ${changed ? 'flash' : ''} ${state.open.includes(k) ? 'open' : ''}" data-act="chart" data-k="${k}">${CHART_LABEL[k]}<i>${{ green: '✓', yellow: '!', red: '✗' }[s] || ''}</i></button>`;
+  }).join('')}</div>`;
 }
 
-function computeDeltas(before, after) {
-  if (!before || !after) return null;
-  const out = {};
-  for (const k of Object.keys(after)) {
-    const a = before[k]; const b = after[k];
-    if (a && b && a.v != null && b.v != null) {
-      const dlt = b.v - a.v;
-      if (Math.abs(dlt) >= (b.digits ? 0.05 : 0.5)) out[k] = dlt;
-    }
-  }
-  return out;
-}
-
-function stripHTML() {
-  const m = stripMetrics(state.design); if (!m) return '';
-  const cell = (k) => {
-    const g = m[k]; const dl = deltas && deltas[k];
-    let badge = '';
-    if (dl != null) {
-      const good = g.better === 0 ? 'neutral' : (dl * g.better > 0 ? 'good' : 'bad');
-      const txt = g.money ? `${dl >= 0 ? '+' : '−'}$${Math.abs(dl).toFixed(0)}M` : `${signed(dl, '', g.digits || 0)}${g.unit}`;
-      badge = `<span class="delta ${good}">${txt}</span>`;
-    }
-    return `<div class="gauge ${g.state}"><div class="g-top"><span class="g-label">${g.label}</span>${badge}</div><div class="g-val">${esc(g.text)}</div><div class="g-sub">${esc(g.sub)}</div></div>`;
-  };
-  return `<div class="strip">${['mass', 'power', 'cost', 'dv', 'data', 'years'].map(cell).join('')}</div>`;
+function chartsSection(ch, keys, heading) {
+  if (!ch) return '';
+  const all = [...new Set([...keys, ...state.open])].filter((k) => ch[k]);
+  return `<section class="graphs"><h2>${heading}</h2><p class="note">Estimates before launch. Tap the chips at the top to add other budgets. Touch a graph to read values.</p>
+    <div class="chart-grid">${all.map((k) => renderChart(ch[k])).join('')}</div></section>`;
 }
 
 // ---------- option cards ----------
@@ -99,7 +97,7 @@ function statsFor(slotKey, p) {
     }
     case 'thermal': {
       const heat = D.coldW * p.heaterFactor;
-      add('x sun max', p.hotLimit); add('krad shield', p.radTol); if (heat > 0) add(`W heater here`, R(heat));
+      add('x sun max', p.hotLimit); add('krad shield', p.radTol); if (heat > 0) add('W heater here', R(heat));
       break;
     }
     case 'comms': {
@@ -130,38 +128,39 @@ function statsFor(slotKey, p) {
 
 function optionsHTML(slot) {
   const D = dest(); const cur = state.design[slot.key];
-  const list = slot.key === 'traj' ? slot.list.map((t) => ({ ...t, name: t.id === 'assist' ? `Assist: ${D.traj.assist.label}` : 'Direct', blurb: t.blurb })) : slot.list;
-  return `<section class="slot"><div class="slot-head"><h2>${slot.label}</h2><span class="role">${slot.role}</span></div>
-    <div class="opts">${list.map((p) => `
+  const list = slot.key === 'traj' ? slot.list.map((t) => ({ ...t, name: t.id === 'assist' ? `Assist: ${D.traj.assist.label}` : 'Direct' })) : slot.list;
+  return `<div class="opts">${list.map((p) => `
       <button class="opt ${cur === p.id ? 'sel' : ''}" data-act="pick" data-slot="${slot.key}" data-id="${p.id}">
         <div class="opt-name">${esc(p.name)}</div><div class="opt-blurb">${esc(p.blurb)}</div>
         <div class="stats">${statsFor(slot.key, p)}</div>
-      </button>`).join('')}</div></section>`;
+      </button>`).join('')}</div>`;
 }
 
 // ---------- screens ----------
 function header() {
-  const n = state.screen;
+  const n = state.step;
   return `<header class="top">
     <div class="brand">Mission Design${DEBUG ? ' <span class="dbg">DEBUG</span>' : ''}</div>
-    <div class="meta"><span>Step ${n}/6 · ${SCREENS[n - 1]}</span><span class="attempt">Attempt ${state.attempt}</span></div>
-    <div class="dots">${SCREENS.map((_, i) => `<i class="${i + 1 <= n ? 'on' : ''}"></i>`).join('')}</div>
+    <div class="meta"><span>Step ${n + 1}/${FLOW.length} · ${stepName(key())}</span><span class="attempt">Attempt ${state.attempt}</span></div>
+    <div class="dots">${FLOW.map((_, i) => `<i class="${i <= n ? 'on' : ''}"></i>`).join('')}</div>
   </header>`;
 }
 
-function nav(canNext, nextLabel = 'Next', back = true) {
+function nav(canNext, nextLabel = 'Next') {
+  const back = canGoBack() && state.step > 0;
+  const lock = !canGoBack() && state.step > 0 ? '<span class="lock">No going back on the first attempt</span>' : '<span></span>';
   return `<nav class="bottom">
-    ${back ? '<button class="btn ghost" data-act="back">Back</button>' : '<span></span>'}
+    ${back ? '<button class="btn ghost" data-act="back">Back</button>' : lock}
     <button class="btn primary" data-act="next" ${canNext ? '' : 'disabled'}>${nextLabel}</button>
   </nav>`;
 }
 
 function debugBar() {
-  if (!DEBUG || state.screen < 2 || state.screen > 4) return '';
+  if (!DEBUG || key() === 'dest' || key() === 'review' || key() === 'launch') return '';
   return `<div class="debugbar"><button class="btn small" data-act="dbg-random">Random design</button><button class="btn small" data-act="dbg-good">Cheapest full success</button><span>seed ${state.seed}</span></div>`;
 }
 
-function screen1() {
+function screenDest() {
   const sel = state.design.dest;
   const cards = DESTINATIONS.map((D) => `
     <button class="dest ${sel === D.id ? 'sel' : ''}" data-act="dest" data-id="${D.id}">
@@ -175,76 +174,58 @@ function screen1() {
       <div class="hazard"><b>⚠ ${esc(D.hazard.name)}:</b> ${esc(D.hazard.text)}</div>
       <div class="goals"><div><span class="tier min">Minimum</span> ${esc(D.minGoal)}</div><div><span class="tier full">Full</span> ${esc(D.fullGoal)}</div></div>
     </button>`).join('');
-  return `${header()}<main><h1>Where are we going?</h1><p class="lead">Whole team decides. Harder targets score more.</p>
+  const intro = state.attempt === 1
+    ? '<p class="lead">Whole team decides. Harder targets score more. You will make one choice per screen, and on this first attempt there is no going back. Choose carefully.</p>'
+    : '<p class="lead">Whole team decides. Harder targets score more.</p>';
+  return `${header()}<main><h1>Where are we going?</h1>${intro}
     ${state.history.length ? historyHTML() : ''}<div class="dests">${cards}</div>
-    <button class="link" data-act="reset">Start over (new team)</button></main>${nav(!!sel, 'Next', false)}`;
+    <button class="link" data-act="reset">Start over (new team)</button></main>${nav(!!sel)}`;
 }
 
-function screenBuild(n, title, lead) {
-  const slots = SLOTS.filter((s) => s.screen === n);
-  const done = slots.every((s) => state.design[s.key]);
-  let extra = '';
-  if (n === 4) extra = costBox();
-  return `${header()}${stripHTML()}<main>${debugBar()}<h1>${title}</h1><p class="lead">${lead}</p>
-    ${slots.map(optionsHTML).join('')}${extra}</main>${nav(done)}`;
+function screenChoice(k) {
+  const slot = SLOT[k]; const D = dest();
+  const c = consideration(k, D, state.design);
+  const ch = showBudgets() ? charts() : null;
+  const html = `${header()}${ch ? healthRow(ch) : ''}<main>${debugBar()}
+    <section class="consider">
+      <div class="eyebrow"><span class="role">${slot.role}</span></div>
+      <h1>${esc(c.title)}</h1>
+      <p class="why">${esc(c.why)}</p>
+      <h3>At ${D.name}</h3>
+      <ul class="here">${c.here.map((h) => `<li>${esc(h)}</li>`).join('')}</ul>
+      <p class="ask">${esc(c.ask)}</p>
+    </section>
+    <h2 class="pick-h">Pick one</h2>
+    ${optionsHTML(slot)}
+    ${ch ? chartsSection(ch, SLOT_CHARTS[k], 'How your design plays out') : ''}
+  </main>${nav(!!state.design[k])}`;
+  lastStatus = ch ? Object.fromEntries(Object.entries(ch).map(([kk, v]) => [kk, v.status])) : null;
+  return html;
 }
 
-function costBox() {
-  const d = state.design; if (!d.traj || !d.launcher) return '';
-  const b = budgets(d, ESTIMATE);
-  const over = b.cost > b.budget;
-  return `<section class="slot"><div class="slot-head"><h2>Budget check</h2><span class="role">Systems</span></div>
-    <div class="costbox ${over ? 'red' : marginColor(b.costMargin)}">
-      <div class="kv"><span>Spacecraft parts</span><b>$${R(b.partCost)}M</b></div>
-      <div class="kv"><span>Launcher</span><b>$${b.launchCost}M</b></div>
-      <div class="kv"><span>Mission ops ($${b.D.opsCostPerYr}M/yr × ${fmtYr(b.years)})</span><b>$${R(b.opsCost)}M</b></div>
-      <div class="kv total"><span>Total vs budget $${b.budget}M</span><b>$${R(b.cost)}M</b></div>
-      ${over ? `<div class="warn">Over budget by $${R(b.cost - b.budget)}M. You can't launch like this.</div>` : ''}
-    </div></section>`;
-}
-
-const ROWS = [
-  ['mass', 'Mass', 'massMargin'], ['power', 'Power', 'powerMargin'], ['dv', 'Delta-v', 'dvMargin'],
-  ['data', 'Data', 'dataMargin'], ['thermal', 'Thermal', 'thermalMargin'], ['rad', 'Radiation', 'radMargin'],
-  ['cost', 'Cost', 'costMargin'], ['life', 'Design life', 'lifeMargin'], ['flyby', 'Flyby hazard', 'flybyMargin'],
-];
-
-function reviewRows(b) {
-  const D = b.D; const P = b.P;
-  const pctm = (m) => `${m >= 0 ? '' : '−'}${Math.abs(R(m * 100))}%`;
-  const txt = {
-    mass: `${R(b.wet)} of ${R(b.cap)} kg`,
-    power: `${R(b.supplyEnd)} W for ${R(b.load)} W load${b.ionMargin != null ? ` · ion ${R(b.supplyArrive)}/${R(b.ionLoad)} W` : ''}`,
-    dv: `${R(b.dvAvail)} of ${R(b.dvReq)} m/s`,
-    data: `${fmtGb(b.returnable)} of ${D.fullGb} Gbit`,
-    thermal: `${b.hotFlux.toFixed(b.hotFlux < 0.1 ? 3 : 1)}x sun vs ${b.hotLimit}x limit`,
-    rad: `${R(b.dose)} of ${b.radTol} krad`,
-    cost: `$${R(b.cost)}M of $${b.budget}M`,
-    life: b.weakest ? `${b.weakest.part.name}: ${b.weakest.part.life} yr vs ${fmtYr(b.weakest.need)}` : '',
-    flyby: b.flybyMargin === 'na' ? 'No flyby' : b.tr.flyby === 'venus' ? `Venus: ${b.flybyFlux.toFixed(1)}x sun vs ${P.thermal.hotLimit}x` : `Jupiter: ${R(b.flybyDose)} of ${P.thermal.radTol} krad`,
-  };
-  const hz = { mercury: 'thermal', europa: 'rad', pluto: 'data' }[D.id];
-  const rows = ROWS.map(([k, label, mk]) => {
-    let m = b[mk];
-    if (k === 'power' && b.ionMargin != null) m = Math.min(m, b.ionMargin);
-    const c = marginColor(m);
-    return { label: label + (hz === k ? ` <span class="hz">⚠ ${esc(D.hazard.name)}</span>` : ''), text: txt[k], c, m: m === 'na' ? '—' : pctm(m) };
-  });
-  if (D.id === 'moon') rows.push({ label: `<span class="hz">⚠ Lunar night</span>`, text: `${(b.nightNeedWh / 1000).toFixed(1)} kWh needed, battery ${(b.batteryWh / 1000).toFixed(1)}`, c: marginColor(b.hazardMargin), m: pctm(b.hazardMargin) });
-  if (D.id === 'mars') rows.push({ label: `<span class="hz">⚠ Dust storm</span>`, text: `${R(b.stormSupply)} W in storm, need ${R(b.stormLoad)} W`, c: marginColor(b.hazardMargin), m: pctm(b.hazardMargin) });
-  return rows;
-}
-
-function screen5() {
+function screenReview() {
   const d = state.design;
   if (!isComplete(d)) return `${header()}<main><h1>Design review</h1><p>Some parts are missing.</p></main>${nav(false)}`;
   const b = budgets(d, ESTIMATE);
-  const rows = reviewRows(b);
-  const reds = rows.filter((r) => r.c === 'red').length; const yellows = rows.filter((r) => r.c === 'yellow').length;
+  const picks = FLOW.filter((k) => SLOT[k]).map((k) => {
+    const p = SLOT[k].list.find((x) => x.id === d[k]);
+    const name = k === 'traj' ? (d.traj === 'assist' ? `Assist: ${b.D.traj.assist.label}` : 'Direct') : p.name;
+    return `<div class="kv"><span>${SLOT[k].label}</span><b>${esc(name)}</b></div>`;
+  }).join('');
+  if (!showBudgets()) {
+    return `${header()}<main><h1>Final design</h1><p class="lead">This is what you're flying to ${b.D.name}. No budgets this time. Launch it and see what happens; the mission report will show you what went wrong.</p>
+      <div class="costbox">${picks}</div>
+      <p class="note">Real hardware always comes out a little different than the estimate.</p>
+    </main>${nav(true, '🚀 Launch')}`;
+  }
+  const ch = buildCharts(d, ESTIMATE);
+  const keys = CHART_ORDER.filter((k) => ch[k]);
+  const reds = keys.filter((k) => ch[k].status === 'red').length; const yellows = keys.filter((k) => ch[k].status === 'yellow').length;
   const over = b.cost > b.budget;
-  return `${header()}<main><h1>Design review</h1><p class="lead">Systems reads it out. Green ≥ 15% margin, yellow is thin, red is broken.</p>
-    <table class="review"><tbody>${rows.map((r) => `<tr class="${r.c}"><td class="dot"><i></i></td><td><div class="r-label">${r.label}</div><div class="r-text">${esc(r.text)}</div></td><td class="r-m">${r.m}</td></tr>`).join('')}</tbody></table>
+  return `${header()}<main><h1>Design review</h1><p class="lead">Systems walks the team through every budget. Green has at least 15% margin, yellow is thin, red is broken.</p>
     <div class="summary">${reds ? `<b class="red-t">${reds} red</b> · ` : ''}${yellows ? `<b class="yellow-t">${yellows} yellow</b> · ` : ''}Mission ${fmtYr(b.years)} · ${esc(b.tr.label)}</div>
+    <div class="chart-grid">${keys.map((k) => renderChart(ch[k])).join('')}</div>
+    <details class="picks"><summary>Your parts</summary><div class="costbox">${picks}</div></details>
     <p class="note">Real hardware always comes out a little different than the estimate. Margins matter.</p>
     ${over ? `<div class="warn">Launch blocked: over budget by $${R(b.cost - b.budget)}M.</div>` : ''}
   </main>${nav(!over, '🚀 Launch')}`;
@@ -256,7 +237,7 @@ function historyHTML() {
 const tierName = (o) => ({ none: 'No mission', min: 'Minimum', full: 'Full success' }[o]);
 
 // ---------- launch screen ----------
-function screen6() {
+function screenLaunch() {
   return `${header()}<main class="launch">
     <div class="phase-name" id="phase">Countdown</div>
     <div class="clock" id="clock">T-0</div>
@@ -289,13 +270,13 @@ function startLaunch() {
   const totalMs = P.lift + P.cruise + P.arr + P.ops;
 
   const beats = [];
-  beats.push({ ms: P.lift * 0.85, cls: f && f.mode === 'launcher' ? 'fail' : 'ok', text: f && f.mode === 'launcher' ? f.text : `Liftoff on ${b.P.launcher.name}. ${R(b.wet)} kg away.`, fail: f && f.mode === 'launcher' });
+  if (!(f && f.phase === 'review')) beats.push({ ms: P.lift * 0.85, cls: f && f.mode === 'launcher' ? 'fail' : 'ok', text: f && f.mode === 'launcher' ? f.text : `Liftoff on ${b.P.launcher.name}. ${R(b.wet)} kg away.`, fail: f && f.mode === 'launcher' });
   for (const e of res.events) {
     const phase = e.kind === 'arrival' ? 'arrival' : e.t < cruise ? 'cruise' : 'ops';
     if (e.kind === 'arrival') continue;
     beats.push({ ms: tOf(e.t, phase), cls: e.kind === 'random' ? 'info' : 'warn', text: `${e.kind === 'random' ? 'Event' : e.kind === 'flyby' ? 'Flyby' : 'Hazard'}: ${e.text}`, t: e.t });
   }
-  if (!f || f.partial || f.t >= cruise && f.phase === 'ops') beats.push({ ms: tOf(cruise, 'arrival'), cls: 'ok', text: `Arrival burn: ${R(b.dvAvail)} of ${R(b.dvReq)} m/s. In position at ${b.D.name}.` });
+  if (!f || f.partial || (f.t >= cruise && f.phase === 'ops')) beats.push({ ms: tOf(cruise, 'arrival'), cls: 'ok', text: `Arrival burn: ${R(b.dvAvail)} of ${R(b.dvReq)} m/s. In position at ${b.D.name}.` });
   if (f && f.mode !== 'launcher') beats.push({ ms: f.partial ? totalMs : tOf(f.t, f.phase), cls: f.partial ? 'warn' : 'fail', text: f.text, fail: !f.partial });
   if (!f) beats.push({ ms: totalMs, cls: 'ok', text: `Mission complete: ${fmtGb(res.scienceGb)} returned.` });
   beats.sort((a, b2) => a.ms - b2.ms);
@@ -324,7 +305,7 @@ function startLaunch() {
     const ms = Math.min(now - t0, stopMs);
     const ph = phaseAt(ms);
     const tm = Math.min(missionT(ms), stopT);
-    document.getElementById('phase').textContent = ['Liftoff', 'Cruise', 'Arrival burn', 'Operations'][ph];
+    document.getElementById('phase').textContent = f && f.phase === 'review' ? 'Program review' : ['Liftoff', 'Cruise', 'Arrival burn', 'Operations'][ph];
     document.getElementById('clock').textContent = ph === 0 ? 'T+0' : `Year ${tm.toFixed(1)}`;
     document.getElementById('fill').style.width = pos(tm);
     for (let i = 0; i < 4; i++) document.getElementById(`ph${i}`).className = i < ph ? 'done' : i === ph ? 'now' : '';
@@ -342,9 +323,10 @@ function startLaunch() {
 }
 
 function showResult(res) {
-  if (state.screen !== 6 || !document.getElementById('result')) return;
+  if (key() !== 'launch' || !document.getElementById('result')) return;
   const d = state.design; const D = res.b.D;
   const code = teamCode(d, state.seed, state.attempt);
+  const first = state.attempt === 1;
   if (!state.history.find((h) => h.attempt === state.attempt)) {
     state.history.push({ attempt: state.attempt, dest: D.name, outcome: res.outcome, score: res.score, code, cost: R(res.cost) });
     save();
@@ -353,6 +335,10 @@ function showResult(res) {
   const f = res.failure;
   const closest = !f ? closestCall(res.b) : null;
   const ev = res.opts.event;
+  // The graph of the budget that broke, flown with the real launch conditions.
+  const ch = buildCharts(d, res.opts, f);
+  const fk = chartForFailure(f, res.b);
+  const failChart = ch && fk && ch[fk] ? `<p class="a-sub">What the ${ch[fk].title.toLowerCase()} budget looked like:</p>${renderChart(ch[fk], { big: true })}` : '';
   document.getElementById('result').innerHTML = `
     <div class="outcome ${res.outcome}">
       <div class="o-tier">${tierName(res.outcome)}</div>
@@ -365,10 +351,12 @@ function showResult(res) {
       <div class="o-note">${res.points} science pts × ${D.mult} (${D.name})</div>
     </div>
     ${f ? `<section class="anomaly"><h2>Anomaly report</h2><p class="a-what">${esc(f.text)}</p>
+      ${failChart}
       <p class="a-sub">Root cause, traced back to your choices:</p>
       ${chains.map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('')}
       </section>` : `<section class="anomaly good"><h2>Mission report</h2><p>Every constraint held. ${closest ? `Closest call: <b>${closest}</b>.` : ''}</p></section>`}
     ${ev ? `<p class="note">Random event this launch: ${esc(ev.text)}</p>` : ''}
+    ${first ? `<div class="unlock"><b>Budgets unlocked.</b> For your redesign, every choice screen shows graphs of power, heat, radiation, data, cost, mass, fuel, and part life over the whole mission, and you can go back and change your mind.</div>` : ''}
     ${historyHTML()}
     <div class="end-actions">
       <button class="btn primary" data-act="redesign">Redesign · Attempt ${state.attempt + 1}</button>
@@ -386,19 +374,19 @@ function closestCall(b) {
 // ---------- render + events ----------
 function render() {
   if (anim) { clearTimeout(anim); anim = null; }
-  const n = state.screen;
+  resetCharts();
+  const k = key();
   let html = '';
-  if (n === 1) html = screen1();
-  else if (n === 2) html = screenBuild(2, 'Pick the science', 'Science picks the instrument. It sets data, power, mass, and cost.');
-  else if (n === 3) html = screenBuild(3, 'Spacecraft bus', 'Power & Thermal, Comms & Data, and Propulsion each pick their parts. Watch the strip.');
-  else if (n === 4) html = screenBuild(4, 'Launch plan', 'Systems picks the rocket and the route, and checks the budget.');
-  else if (n === 5) html = screen5();
-  else html = screen6();
+  if (k === 'dest') html = screenDest();
+  else if (k === 'review') html = screenReview();
+  else if (k === 'launch') html = screenLaunch();
+  else html = screenChoice(k);
   $app.innerHTML = html;
-  if (n === 6) startLaunch();
+  if (k === 'launch') startLaunch();
 }
 
-function go(n) { state.screen = n; deltas = null; save(); render(); window.scrollTo(0, 0); }
+function go(n) { state.step = n; lastStatus = null; save(); render(); window.scrollTo(0, 0); }
+const stepOf = (k) => FLOW.indexOf(k);
 
 function autoPick(mode) {
   const D = dest(); if (!D) return;
@@ -408,28 +396,30 @@ function autoPick(mode) {
     const rng = mulberry32(Date.now() & 0xffffffff);
     for (const s of SLOTS) state.design[s.key] = s.list[Math.floor(rng() * s.list.length)].id;
   }
-  deltas = null; save(); render();
+  save(); render();
 }
 
 $app.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]'); if (!el) return;
   const act = el.dataset.act;
+  const keepScroll = () => { const y = window.scrollY; render(); window.scrollTo(0, y); };
   if (act === 'dest') {
     state.design.dest = el.dataset.id; save(); render();
   } else if (act === 'pick') {
-    const before = stripMetrics(state.design);
     state.design[el.dataset.slot] = el.dataset.id;
-    deltas = computeDeltas(before, stripMetrics(state.design));
-    save();
-    const y = window.scrollY; render(); window.scrollTo(0, y);
+    save(); keepScroll();
+  } else if (act === 'chart') {
+    const k = el.dataset.k;
+    state.open = state.open.includes(k) ? state.open.filter((x) => x !== k) : [...state.open, k];
+    lastStatus = null; save(); keepScroll();
   } else if (act === 'next') {
-    if (state.screen === 1 && DEBUG && !SLOTS.some((s) => state.design[s.key])) { autoPick('random'); }
-    go(Math.min(6, state.screen + 1));
-  } else if (act === 'back') go(Math.max(1, state.screen - 1));
-  else if (act === 'redesign') { state.attempt += 1; go(2); }
-  else if (act === 'newdest') { state.attempt += 1; go(1); }
+    if (key() === 'dest' && DEBUG && !SLOTS.some((s) => state.design[s.key])) autoPick('random');
+    go(Math.min(FLOW.length - 1, state.step + 1));
+  } else if (act === 'back') { if (canGoBack()) go(Math.max(0, state.step - 1)); }
+  else if (act === 'redesign') { state.attempt += 1; go(stepOf('payload')); }
+  else if (act === 'newdest') { state.attempt += 1; go(stepOf('dest')); }
   else if (act === 'reset') {
-    if (confirm('Start over as a new team? This clears all attempts.')) { state = fresh(); deltas = null; save(); render(); }
+    if (confirm('Start over as a new team? This clears all attempts.')) { state = fresh(); save(); render(); }
   } else if (act === 'dbg-random') autoPick('random');
   else if (act === 'dbg-good') autoPick('good');
 });
@@ -438,4 +428,4 @@ $app.addEventListener('click', (e) => {
 render();
 
 // Expose for quick console checks.
-if (DEBUG) window.__md = { state: () => state, budgets, simulate, allDesigns, LAUNCHERS };
+if (DEBUG) window.__md = { state: () => state, budgets, simulate, allDesigns, buildCharts, LAUNCHERS, statusBadge };

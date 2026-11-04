@@ -69,6 +69,55 @@ function supplyAt(t, P, cruise, opts, flybyHit = 0) {
   return pw.outW * solarFactor(D) * Math.pow(1 - CRUISE_ARRAY_DEG, tc) * Math.pow(1 - D.solarDeg, to) * (1 - flybyHit) * f;
 }
 
+// ---------- time profiles (shared by simulate and the budget graphs) ----------
+// All take the result of budgets() so they see the same parts and launch conditions.
+const FLYBY_WIDTH = 0.03; // years the Venus flyby heat spike lasts (graph + check)
+export const STORM_YEARS = 0.1; // how long the Mars dust storm lasts
+
+// Sunlight on the craft (x Earth), plus RTG waste heat. Heading outward it eases
+// down to the destination's value; heading sunward the craft stays behind its
+// cruise sunshade (about Earth level) until arrival. Plus the Venus flyby spike.
+export function heatAt(t, b) {
+  const { P, D, tr } = b;
+  const rtg = P.power && P.power.type === 'rtg' ? RTG_HOT_FLUX : 0;
+  let f = t >= tr.cruise ? D.hotFlux : Math.min(1, Math.pow(D.hotFlux, t / tr.cruise));
+  if (tr.flyby === 'venus' && Math.abs(t - tr.flybyYear) <= FLYBY_WIDTH) f = Math.max(f, FLYBYS.venus.flux);
+  return f + rtg;
+}
+
+// Accumulated radiation dose (krad) t years after launch.
+export function doseAt(t, b) {
+  const { D, tr } = b; const ev = b.opts.event;
+  let x = D.cruiseDosePerYr * Math.min(t, tr.cruise) + D.opsDosePerYr * Math.max(0, t - tr.cruise);
+  if (tr.flyby && t >= tr.flybyYear) x += FLYBYS[tr.flyby].dose;
+  if (ev && ev.dose && t >= tr.cruise * b.opts.eventFrac) x += ev.dose;
+  return x;
+}
+
+// Electrical power available t years after launch. During cruise, solar output
+// eases from Earth's sunlight to the destination's. Matches supplyAt() from arrival on.
+export function powerAt(t, b) {
+  const { P, D, tr } = b; const pw = P.power; const opts = b.opts;
+  if (!pw) return 0;
+  const f = (opts.event && opts.event.powerFactor) || 1;
+  if (pw.type === 'rtg') return pw.outW * Math.pow(1 - pw.decay, t) * f;
+  const hit = tr.flyby && t >= tr.flybyYear ? FLYBYS[tr.flyby].arrayHit : 0;
+  if (t < tr.cruise) return pw.outW * Math.pow(solarFactor(D), t / tr.cruise) * Math.pow(1 - CRUISE_ARRAY_DEG, t) * (1 - hit) * f;
+  let s = supplyAt(t, P, tr.cruise, opts, hit);
+  if (inStorm(t, b)) s *= D.stormFactor;
+  return s;
+}
+
+export function inStorm(t, b) {
+  const { D, tr } = b;
+  return !!D.stormFactor && t >= tr.cruise + D.stormYear && t <= tr.cruise + D.stormYear + STORM_YEARS;
+}
+
+// Power the spacecraft needs at its destination (survival mode during a dust storm).
+export function needAt(t, b) {
+  return inStorm(t, b) ? b.stormLoad : b.load;
+}
+
 export function launchCapacity(launcher, c3) {
   return launcher.baseKg * Math.exp(-c3 / launcher.falloff);
 }
@@ -78,7 +127,7 @@ export function budgets(d, opts = ESTIMATE) {
   const P = parts(d); const D = P.D;
   const tr = D && d.traj ? D.traj[d.traj] : null;
   const ev = opts.event || {};
-  const r = { P, D, tr };
+  const r = { P, D, tr, opts };
 
   // Mass
   const subs = [P.payload, P.power, P.thermal, P.comms, P.engine, P.tank];
@@ -219,7 +268,7 @@ export function simulate(d, opts = NOMINAL) {
 
   // Review gate
   if (b.cost > b.budget) {
-    return finish(b, opts, [], { t: 0, phase: 'review', mode: 'cost', text: `Over budget by $${Math.round(b.cost - b.budget)}M. Launch blocked.` });
+    return finish(b, opts, [], { t: 0, phase: 'review', mode: 'cost', text: `Program review: over budget by $${Math.round(b.cost - b.budget)}M. Mission cancelled before launch.` });
   }
 
   // Liftoff
@@ -244,16 +293,10 @@ export function simulate(d, opts = NOMINAL) {
     }
   }
   // Radiation: dose accumulates linearly, plus flyby spike
-  const doseAt = (t) => {
-    let x = D.cruiseDosePerYr * Math.min(t, cruise) + D.opsDosePerYr * Math.max(0, t - cruise);
-    if (tr.flyby && t >= tr.flybyYear) x += FLYBYS[tr.flyby].dose;
-    if (opts.event && opts.event.dose && t >= cruise * opts.eventFrac) x += opts.event.dose;
-    return x;
-  };
   const tol = P.thermal.radTol;
-  if (doseAt(end) > tol && !(tr.flyby === 'jupiter' && b.flybyMargin < 0)) {
-    const t = findFirst(0, end, (t) => doseAt(t) > tol);
-    fail(t, t < cruise ? 'cruise' : 'ops', 'radiation', `Radiation dose hit ${Math.round(doseAt(end))} krad vs ${tol} krad tolerance.`);
+  if (doseAt(end, b) > tol && !(tr.flyby === 'jupiter' && b.flybyMargin < 0)) {
+    const t = findFirst(0, end, (x) => doseAt(x, b) > tol);
+    fail(t, t < cruise ? 'cruise' : 'ops', 'radiation', `Radiation dose hit ${Math.round(doseAt(end, b))} krad vs ${tol} krad tolerance.`);
   }
 
   // Arrival burn

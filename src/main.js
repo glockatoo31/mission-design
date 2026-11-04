@@ -3,18 +3,14 @@ import '@fontsource-variable/geist-mono';
 import './style.css';
 import { DESTINATIONS, CONTRACTS, PAYLOADS, PARAMS, STEPS, FLYBYS } from './data.js';
 import {
-  budgets, budgetMargins, parts, simulate, explain, launchConditions, teamCode, ESTIMATE, paramVal,
-  isComplete, cheapestFull, mulberry32, launchCapacity, fmtYr, fmtGb,
+  budgets, budgetMargins, marginColor, parts, simulate, explain, launchConditions, teamCode, ESTIMATE, NOMINAL,
+  isComplete, cheapestFull, par, mulberry32, launchCapacity, fmtYr, fmtGb,
 } from './model.js';
-import {
-  SUBS, SUB_LABEL, POWER_USERS, MIN_RESERVE, COST_STEP, POWER_STEP, fixedCost, fixedPower, costPool, defaultAlloc, fitAlloc,
-  costReserve, powerRequired, compliance, requirements, reqFor,
-} from './syseng.js';
-import { consideration } from './considerations.js';
+import { LEAD, fmtU, interfaces, incoming, outgoing, failRow, requirements, reqFor } from './syseng.js';
 import {
   buildCharts, renderChart, resetCharts, attachHover, chartForFailure, CHART_ORDER, CHART_LABEL,
 } from './charts.js';
-import { COUPLING, BUDGET_LABEL, couplingMap } from './coupling.js';
+import { couplingMap } from './coupling.js';
 import { ICON, MARK } from './icons.js';
 import { craftSVG } from './craft.js';
 import { createScene } from './scene.js';
@@ -25,36 +21,30 @@ const DEBUG = query.has('debug');
 // ?demo: three contracts, three different traps (deadline + battery, dust storm + mass, radiation + power).
 const DEMO_IDS = query.has('demo') ? ['lunar-survey', 'mars-survey', 'europa-spec'] : null;
 const URL_SEED = query.has('seed') ? Math.abs(parseInt(query.get('seed'), 10)) || 1 : null;
-const STORE = 'mission-design-v4';
+const STORE = 'mission-design-v6';
+const MAX_ROUNDS = 3;
 
-// Contract, then its requirements, then the Flight Director allocates the budgets. Each lead
-// designs inside their allocation: the bus, then route and propulsion (both depend on the
-// target), then the rocket, which is picked last with the bus mass locked in.
-const FLOW = ['contract', 'reqs', 'alloc', ...STEPS.map((s) => s.key), 'review', 'launch'];
+// The loop: take a contract, read its requirements, build on one board (four leads, pass the
+// phone), review, launch. Three rounds: a blind flight test, then the contract is amended, then
+// a final attempt. Then a debrief.
+const FLOW = ['contract', 'reqs', 'build', 'review', 'launch', 'debrief'];
 const STEP = Object.fromEntries(STEPS.map((s) => [s.key, s]));
-const STEP_NAME = { contract: 'Contract', reqs: 'Requirements', alloc: 'Allocation', review: 'Review', launch: 'Launch' };
-// Which allocation each design screen draws on.
+const STEP_NAME = { contract: 'Contract', reqs: 'Requirements', build: 'Build', review: 'Review', launch: 'Launch', debrief: 'Debrief' };
+// Which lead owns each part.
 const OWNER = { power: 'pt', thermal: 'pt', comms: 'comms', traj: 'prop', engine: 'prop', tank: 'prop', launcher: 'launch' };
-const stepName = (k) => STEP_NAME[k] || STEP[k].label;
+const stepName = (k) => STEP_NAME[k];
+const roleBadge = (k) => (k === 'build' ? 'Pass the phone to each lead' : 'Role: Flight Director');
 
-// Silos: each screen shows only the budgets it governs (plus total cost and mass).
-// The whole dashboard waits for the review, where the subsystems get integrated.
-const SCREEN_CHARTS = {
-  power: ['power', 'night'], thermal: ['thermal', 'rad'], comms: ['data'],
-  traj: ['time', 'dv'], engine: ['dv', 'time'], tank: ['dv'], launcher: ['mass'],
-};
-
-// Who holds the phone on each screen.
-const ROLE = {
-  power: 'Power & Thermal Lead', thermal: 'Power & Thermal Lead', comms: 'Comms Lead',
-  traj: 'Propulsion & Trajectory Lead', engine: 'Propulsion & Trajectory Lead', tank: 'Propulsion & Trajectory Lead',
-};
-const roleBadge = (k) => (ROLE[k] ? `Pass phone → ${ROLE[k]}` : 'Role: Flight Director');
-
-const blank = () => ({
-  contract: null, engine: null, traj: null, launcher: null, alloc: null, cr: {},
-  ...Object.fromEntries(Object.entries(PARAMS).map(([k, p]) => [k, p.def])),
-});
+// The starter design: a flying baseline. Every slot starts at its middle choice.
+function blank() {
+  const d = { contract: null, changed: false, ...Object.fromEntries(Object.entries(PARAMS).map(([k, p]) => [k, p.def])) };
+  const start = { traj: 'direct', engine: 'biprop', launcher: 'medium' };
+  for (const s of STEPS) {
+    const id = start[s.key] || 'm'; const o = s.list.find((x) => x.id === id);
+    d[s.key] = id; if (o.set) Object.assign(d, o.set);
+  }
+  return d;
+}
 const fresh = () => ({ step: 0, design: blank(), attempt: 1, seed: URL_SEED ?? 1000 + Math.floor(Math.random() * 9000), history: [] });
 
 function load() {
@@ -66,10 +56,9 @@ function load() {
   } catch { return null; }
 }
 let state = load() || fresh();
-let ripple = null; // budgets the last change moved (attempt 2+)
-let dragBefore = null; // margins when a slider drag started
+let ripple = null; // budgets the last change moved (round 2+)
 let anim = null; // running launch animation handle
-let speed = 1; // launch playback speed (2x toggle, attempt 2+)
+let speed = 1; // launch playback speed (2x toggle, round 2+)
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* private mode */ } };
 
 const $app = document.getElementById('app');
@@ -88,27 +77,32 @@ const canGoBack = () => state.attempt > 1;
 // ---------- budget chips + graphs (attempt 2+) ----------
 function charts() { return isComplete(state.design) ? buildCharts(state.design, ESTIMATE) : null; }
 
-function graphsInner(ch, screen) {
-  return [...new Set([...SCREEN_CHARTS[screen], 'cost', 'mass'])].filter((k) => ch[k]).map((k) => renderChart(ch[k])).join('');
-}
-
 // ---------- coupling: what a choice feeds, and what the last change moved ----------
 // Margins past ±100% are "plenty" / "hopeless": clamp so only real shifts show up.
 const clampM = (m) => (typeof m === 'number' ? Math.max(-1, Math.min(1, m)) : m);
 const margins = () => { const ch = charts(); return ch ? Object.fromEntries(Object.entries(ch).map(([k, v]) => [k, clampM(v.margin)])) : null; };
 const fmtM = (m) => (m == null ? '–' : m >= 1 ? '100%+' : m <= -1 ? '−100%' : `${m < 0 ? '−' : ''}${Math.abs(R(m * 100))}%`);
 
+// Every budget has an owner. A change that hurts a budget someone else owns is a change notice to them.
+const BUDGET_OWNER = { power: 'pt', thermal: 'pt', rad: 'pt', night: 'pt', data: 'comms', time: 'prop', dv: 'prop', mass: 'launch', cost: 'launch' };
+const ownerOf = (k) => (k === 'life' ? ((interfaces(state.design).find((r) => r.label === 'Part life') || {}).to || 'pt') : BUDGET_OWNER[k]);
+
 function computeRipple(before, after) {
   if (!before || !after) return null;
-  return Object.keys(after).filter((k) => typeof before[k] === 'number' && typeof after[k] === 'number' && Math.abs(after[k] - before[k]) >= 0.03)
-    .sort((a, b) => Math.abs(after[b] - before[b]) - Math.abs(after[a] - before[a])).slice(0, 4)
+  const all = Object.keys(after).filter((k) => typeof before[k] === 'number' && typeof after[k] === 'number' && Math.abs(after[k] - before[k]) >= 0.03)
+    .sort((a, b) => Math.abs(after[b] - before[b]) - Math.abs(after[a] - before[a]))
     .map((k) => ({ k, from: before[k], to: after[k] }));
+  const top = all.slice(0, 4); top.all = all;
+  return top;
 }
 
 function rippleHTML() {
   if (!showBudgets() || !ripple) return '';
   if (!ripple.length) return '<div class="ripple"><b>That change barely moved any budget.</b></div>';
+  const me = ripple.who; // the lead who just made the change
+  const notices = ripple.all.filter((r) => r.to < r.from && r.to < 0.15 && ownerOf(r.k) !== me);
   return `<div class="ripple"><b>That change moved:</b>${ripple.map((r) => `<span class="rchip ${r.to < 0.15 && r.to < r.from ? 'down' : r.from < 0.15 && r.to >= 0.15 ? 'up' : ''}">${CHART_LABEL[r.k]} <i>${fmtM(r.from)}</i> → <i>${fmtM(r.to)}</i></span>`).join('')}</div>
+    ${notices.length ? `<div class="notice"><b>Change notice</b>${notices.map((r) => `<div>${LEAD[ownerOf(r.k)]}: ${CHART_LABEL[r.k]} ${fmtM(r.from)} → ${fmtM(r.to)}. They must respond.</div>`).join('')}</div>` : ''}
     <p class="note">Margin left. Same choice, many budgets.</p>`;
 }
 
@@ -122,19 +116,47 @@ const partName = (c) => {
   return P[c].short;
 };
 
-// ---------- option cards (engine, route, rocket) ----------
+// ---------- choices: chunky presets, engines, routes and rockets ----------
+const f$ = (v) => `$${R(v)}M`;
+const choiceName = (k) => {
+  const o = STEP[k].list.find((x) => x.id === state.design[k]);
+  if (!o) return '';
+  return k === 'traj' ? (o.id === 'assist' ? `Assist: ${dest().traj.assist.label}` : 'Direct') : o.name;
+};
+
+// A part's own numbers: mass, cost, and what it does at this destination.
+function liveStats(k, d = state.design) {
+  const D = dest(); const P = parts(d); const s = [];
+  const add = (u, v) => s.push(`<span class="stat"><b>${v}</b> ${u}</span>`);
+  const part = P[k];
+  add('kg', R(part.mass)); add('', f$(part.cost));
+  if (k === 'power') {
+    const w = part.solarW * Math.min(1 / D.sunAU ** 2, D.solarCap) + part.rtgW;
+    add(`W at ${D.name}`, w >= 10 ? R(w) : w.toFixed(1));
+    if (D.nightHours) add('kWh battery', n1(part.batteryWh / 1000));
+  } else if (k === 'thermal') {
+    add('x sun max', n1(part.hotLimit)); add('krad shield', R(part.radTol));
+    const heat = D.coldW * part.heaterFactor; if (heat > 0) add('W heater here', R(heat));
+  } else if (k === 'comms') {
+    const down = (part.rateGb * D.contact) / (D.earthAU * D.earthAU);
+    add('W from bus', part.powerW); add('x sun heat', part.heatFlux.toFixed(2)); add(`Gbit/yr from ${D.name}`, down >= 100 ? R(down) : down.toFixed(1));
+  } else if (k === 'tank') add('kg fuel', R(part.prop));
+  return s.join('');
+}
+
 function statsFor(stepKey, p) {
+  if (p.set) return liveStats(stepKey, { ...state.design, ...p.set });
   const D = dest(); const d = state.design; const s = [];
   const add = (k, v) => s.push(`<span class="stat"><b>${v}</b> ${k}</span>`);
   if (p.mass != null) add('kg', p.mass);
-  if (p.cost != null) add('', `$${p.cost}M`);
+  if (p.cost != null) add('', f$(p.cost));
   if (stepKey === 'engine') { add('Isp (s)', p.isp); add('thrust', p.thrustN >= 400 ? 'High' : p.thrustN >= 50 ? 'Medium' : 'Tiny'); if (p.powerW) add('W to run', p.powerW); }
   if (stepKey === 'launcher') add(`kg to ${D.name}`, R(launchCapacity(p, D.traj[d.traj || 'direct'].c3)));
   if (stepKey === 'traj') {
     const tr = D.traj[p.id];
     add('yr trip', fmtYr(tr.cruise, true)); add('m/s burn', tr.dv);
     add('launch energy', tr.c3 > 30 ? 'High' : tr.c3 > 10 ? 'Med' : 'Low');
-    add('ops cost', `$${R(D.opsCostPerYr * (tr.cruise + D.opsYears))}M`);
+    add('ops cost', f$(D.opsCostPerYr * (tr.cruise + D.opsYears)));
     if (tr.flyby) add('', FLYBYS[tr.flyby].name);
   }
   if (p.life != null) add('yr life', p.life);
@@ -151,62 +173,28 @@ function optionsHTML(step) {
       </button>`).join('')}</div>`;
 }
 
-// ---------- sliders (power, thermal, antenna, fuel) ----------
-const fmtV = (v, p) => `${n1(v)}${p.unit ? ` ${p.unit}` : ''}`;
-
-function slidersHTML(step) {
-  const D = dest();
-  const keys = step.params.filter((k) => k !== 'battery' || D.nightHours);
-  return `<div class="sliders">${keys.map((k) => {
-    const p = PARAMS[k]; const v = paramVal(state.design, k);
-    return `<div class="slider"><div class="s-head"><label for="sl-${k}">${p.label}</label><output id="out-${k}" class="s-val">${fmtV(v, p)}</output></div>
-      <input id="sl-${k}" type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${v}" data-key="${k}">
-      <div class="s-scale"><span>${fmtV(p.min, p)}</span><span>${fmtV(p.max, p)}</span></div></div>`;
-  }).join('')}<div class="stats live" id="live">${liveStats(step.key)}</div></div>`;
-}
-
-// The part's own numbers as you size it: mass, cost, and what it does at this destination.
-function liveStats(k) {
-  const D = dest(); const P = parts(state.design); const s = [];
-  const add = (u, v) => s.push(`<span class="stat"><b>${v}</b> ${u}</span>`);
-  const part = P[k];
-  add('kg', R(part.mass)); add('', `$${R(part.cost)}M`);
-  if (k === 'power') {
-    const w = part.solarW * Math.min(1 / D.sunAU ** 2, D.solarCap) + part.rtgW;
-    add(`W at ${D.name}`, w >= 10 ? R(w) : w.toFixed(1));
-    if (D.nightHours) add('kWh battery', n1(part.batteryWh / 1000));
-  } else if (k === 'thermal') {
-    add('x sun max', n1(part.hotLimit)); add('krad shield', R(part.radTol));
-    const heat = D.coldW * part.heaterFactor; if (heat > 0) add('W heater here', R(heat));
-  } else if (k === 'comms') {
-    const down = (part.rateGb * D.contact) / (D.earthAU * D.earthAU);
-    add('W from bus', part.powerW); add('x sun heat', part.heatFlux.toFixed(2)); add(`Gbit/yr from ${D.name}`, down >= 100 ? R(down) : down.toFixed(1));
-  } else if (k === 'tank') add('kg fuel', R(part.prop));
-  return s.join('');
+// Picking a preset sets the sizes the physics uses; picking an engine, route or rocket sets its id.
+function setChoice(k, id) {
+  const opt = STEP[k].list.find((x) => x.id === id);
+  state.design[k] = id;
+  if (opt && opt.set) Object.assign(state.design, opt.set);
 }
 
 // ---------- screens ----------
 function header() {
   const n = state.step;
   return `<header class="top">
-    <div class="top-row"><div class="brand">${MARK}Mission Design${DEBUG ? ' <span class="dbg">debug</span>' : ''}</div><span class="attempt">Attempt ${state.attempt}</span></div>
-    <div class="countdown"><b>${n === FLOW.length - 1 ? 'T+0' : `T−${FLOW.length - 1 - n}`}</b> · ${stepName(key())} <span class="role-badge">${roleBadge(key())}</span></div>
+    <div class="top-row"><div class="brand">${MARK}Mission Design${DEBUG ? ' <span class="dbg">debug</span>' : ''}</div><span class="attempt">Round ${Math.min(state.attempt, MAX_ROUNDS)} of ${MAX_ROUNDS}</span></div>
+    <div class="countdown"><b>${n >= stepOf('launch') ? 'T+0' : `T−${stepOf('launch') - n}`}</b> · ${stepName(key())} <span class="role-badge">${roleBadge(key())}</span></div>
     <i class="prog" style="width:${(100 * n) / (FLOW.length - 1)}%"></i>
   </header>`;
 }
 
-function canNext() {
-  const d = state.design; const k = key();
-  if (k === 'contract') return !!d.contract;
-  if (k === 'alloc') return costReserve(d, contract()) >= minReserve();
-  if (k === 'power') return paramVal(d, 'solarArea') > 0 || paramVal(d, 'rtgUnits') > 0;
-  if (k === 'traj' || k === 'engine' || k === 'launcher') return !!d[k];
-  return true;
-}
+const stepOf = (k) => FLOW.indexOf(k);
 
 function nav(canGo, nextLabel = 'Next') {
   const back = canGoBack() && state.step > 0;
-  const lock = !canGoBack() && state.step > 0 ? '<span class="lock">No going back on the first attempt</span>' : '<span></span>';
+  const lock = !canGoBack() && state.step > 0 ? '<span class="lock">No going back in the flight test</span>' : '<span></span>';
   return `<nav class="bottom">
     ${back ? '<button class="btn ghost" data-act="back">Back</button>' : lock}
     <button class="btn primary" data-act="next" ${canGo ? '' : 'disabled'}>${nextLabel}</button>
@@ -214,7 +202,7 @@ function nav(canGo, nextLabel = 'Next') {
 }
 
 function debugBar() {
-  if (!DEBUG || !state.design.contract || key() === 'review' || key() === 'launch') return '';
+  if (!DEBUG || key() !== 'build') return '';
   return `<div class="debugbar"><button class="btn small" data-act="dbg-random">Random design</button><button class="btn small" data-act="dbg-good">Cheapest full success</button><span>seed ${state.seed}</span></div>`;
 }
 
@@ -234,103 +222,84 @@ function screenContract() {
       <div class="hazard">${ICON.alert}<span>${esc(D.hazard.name)}</span></div>
     </button>`;
   }).join('');
-  const intro = state.attempt === 1
-    ? '<p class="lead">Accept a contract. It fixes the target, the instrument, the deadline and the funding. One choice per screen after this, and no going back.</p>'
-    : '<p class="lead">Take the same contract again, or switch.</p>';
-  return `${header()}<main><h1>Contract board</h1>${intro}
-    ${state.history.length ? historyHTML() : ''}<div class="dests">${cards}</div>
+  return `${header()}<main><h1>Contract board</h1>
+    <p class="lead">Take a contract. Three rounds: a blind flight test, then the customer changes the contract, then your final attempt. Earn up to three stars a round.</p>
+    <div class="dests">${cards}</div>
     <button class="link" data-act="reset">Start over (new team)</button></main>${nav(!!sel)}`;
 }
 
-// ---------- requirements and allocation (Flight Director) ----------
-const f$ = (v) => `$${R(v)}M`;
-const fW = (v) => `${R(v)} W`;
+// ---------- requirements and interfaces ----------
 const fPct = (m) => (typeof m === 'number' ? `${m < 0 ? '−' : '+'}${Math.min(999, Math.abs(R(m * 100)))}%` : '–');
-const minReserve = () => Math.ceil(MIN_RESERVE * contract().budget);
 
 function screenReqs() {
   const rows = requirements(state.design);
-  return `${header()}<main><h1>Requirements</h1>
-    <p class="lead">The contract, as testable requirements. Each has an owner and a trace to the choices that satisfy it. At Review you verify every one.</p>
+  return `${header()}<main><h1>Requirements</h1>${amendHTML()}
+    <p class="lead">The contract, as testable requirements. Each has an owner. Every choice you make puts new requirements on another lead. At Review you verify them all.</p>
     <div class="reqs">${rows.map((r) => `<div class="req"><b class="rid">${r.id}</b><div><div class="rtext">${esc(r.text)}</div><div class="rmeta">Owner: ${r.owner}</div><div class="rmeta">Satisfied by: ${r.by}</div></div></div>`).join('')}</div>
   </main>${nav(true)}`;
 }
 
-function allocSlider(kind, id, label, max, step, fmt) {
-  const v = state.design.alloc[kind][id];
-  return `<div class="slider"><div class="s-head"><label for="al-${kind}-${id}">${label}</label><output id="ao-${kind}-${id}" class="s-val">${fmt(v)}</output></div>
-    <input id="al-${kind}-${id}" type="range" min="0" max="${max}" step="${step}" value="${v}" data-alloc="${kind}.${id}"></div>`;
+// Where an interface row's need comes from, largest first.
+const sourcesHTML = (r) => `<small>${[...r.sources].sort((a, c) => c.v - a.v).map((s) => `${LEAD[s.from].replace(' Lead', '')}: ${esc(s.text)} ${fmtU(s.v, r.unit)}`).join(' · ')}</small>`;
+
+// "Requirements on you" and "your choices put on others", for the lead holding the phone.
+// Attempt 1 shows what is needed; attempt 2+ adds what your design provides and the margin.
+function ifacePanel(k) {
+  const who = OWNER[k]; const rows = interfaces(state.design); const live = showBudgets();
+  const mine = incoming(rows, who);
+  const row = (r) => `<div class="irow ${live ? r.status : ''}"><div class="kv"><span>${r.label}</span><b>${live && r.have != null ? `${fmtU(r.need, r.unit)} of ${fmtU(r.have, r.unit)} · ${fPct(r.margin)}` : `needs ${fmtU(r.need, r.unit)}`}</b></div>${sourcesHTML(r)}${r.note && live ? `<small>${esc(r.note)}</small>` : ''}</div>`;
+  const out = outgoing(rows, who);
+  const byLead = {};
+  for (const o of out) (byLead[o.row.to] = byLead[o.row.to] || []).push(`${o.row.label} ${fmtU(o.src.v, o.row.unit)} (${esc(o.src.text)})`);
+  return `<h2>Requirements on you</h2>${mine.length ? mine.map(row).join('') : '<small>Nothing yet.</small>'}
+    ${out.length ? `<h2>Your choices put on others</h2>${Object.entries(byLead).map(([to, xs]) => `<div class="irow"><div class="kv"><span>${LEAD[to]}</span></div><small>${xs.join(' · ')}</small></div>`).join('')}` : ''}`;
 }
 
-function allocSummary() {
-  const d = state.design; const C = contract();
-  const alloc = SUBS.reduce((s, x) => s + d.alloc.cost[x.id], 0); const res = costReserve(d, C); const min = minReserve();
-  return `<div class="costbox"><div class="kv"><span>Funding cap</span><b>${f$(C.budget)}</b></div>
-    <div class="kv"><span>Fixed: bus + instrument</span><b>${f$(fixedCost(C))}</b></div>
-    <div class="kv"><span>Allocated to the four owners</span><b>${f$(alloc)}</b></div>
-    <div class="kv total"><span>Reserve (keep at least ${f$(min)})</span><b class="${res < min ? 'red-t' : ''}">${f$(res)}</b></div>
-    <div class="kv"><span>Power system must supply</span><b>${fW(powerRequired(d, C))}</b></div></div>
-    ${res < min ? `<div class="warn">Hold back at least ${f$(min)} as reserve. It pays for change requests later.</div>` : ''}`;
+// ---------- the build board ----------
+// One board, four leads. The spacecraft starts as a flying baseline and each lead tweaks their
+// own part. Silos: a lead sees their own gauges; cost and lift are shared, the rest waits for Review.
+const SECTIONS = [['comms', ['comms']], ['prop', ['traj', 'engine', 'tank']], ['pt', ['thermal', 'power']], ['launch', ['launcher']]];
+
+// The contract amendment that lands from round 2.
+function amendment() {
+  const C0 = contract(); if (!state.design.changed || !C0.change) return null;
+  const p = C0.change.patch; const out = [];
+  if (p.payload && p.payload !== C0.payload) out.push(`new instrument: ${PAYLOADS.find((x) => x.id === p.payload).name}`);
+  if (p.goalGb && p.goalGb !== C0.goalGb) out.push(`science goal ${C0.goalGb} → ${p.goalGb} Gbit`);
+  if (p.deadline && p.deadline !== C0.deadline) out.push(`arrive within ${fmtYr(p.deadline)}`);
+  if (p.budget && p.budget !== C0.budget) out.push(`funding $${C0.budget}M → $${p.budget}M`);
+  return out.join(', ');
+}
+const amendHTML = () => { const t = amendment(); return t ? `<div class="notice"><b>Contract amendment</b>${esc(t)}. Your round-1 design may no longer fit.</div>` : ''; };
+
+function gaugesHTML(who) {
+  const rows = incoming(interfaces(state.design), who); if (!rows.length) return '';
+  const live = showBudgets();
+  return `<div class="gauges">${rows.map((r) => (live && r.margin != null
+    ? `<span class="g ${r.status}">${r.label} <b>${fPct(r.margin)}</b></span>`
+    : `<span class="g">${r.label} <b>needs ${fmtU(r.need, r.unit)}</b></span>`)).join('')}</div>`;
 }
 
-function screenAlloc() {
-  const C = contract(); const max = Math.floor(costPool(C) / COST_STEP) * COST_STEP;
-  return `${header()}<main><h1>Allocate the budgets</h1>
-    <p class="lead">Flight Director: split cost between the four owners, and the power each may draw. What you do not allocate is reserve. Each lead then designs inside their share, and the power system is sized to cover every allocated load.</p>
-    <section class="slot"><h2>Cost</h2><div class="sliders">${SUBS.map((s) => allocSlider('cost', s.id, s.label, max, COST_STEP, f$)).join('')}</div></section>
-    <section class="slot"><h2>Power draw</h2><div class="sliders">${POWER_USERS.map((id) => allocSlider('power', id, { pt: 'Heaters (Power & Thermal)', comms: 'Transmitter (Comms)', prop: 'Ion engine (Propulsion)' }[id], 400, POWER_STEP, fW)).join('')}</div>
-      <p class="note">Bus and instrument draw ${fW(fixedPower(C))} on top of this.</p></section>
-    <div id="alloc-sum">${allocSummary()}</div>
-  </main>${nav(canNext())}`;
+function sectionHTML([who, keys]) {
+  return `<section class="slot"><div class="slot-head"><h2>Pass phone → ${LEAD[who]}</h2></div>${gaugesHTML(who)}
+    ${keys.map((k) => `<div class="card"><h3>${STEP[k].label}</h3>${optionsHTML(STEP[k])}</div>`).join('')}
+    <details class="who"><summary>Who needs what</summary><section class="alloc">${ifacePanel(keys[0])}</section></details></section>`;
 }
 
-// "Your allocation" panel on each design screen. Attempt 1 shows the numbers only;
-// attempt 2+ adds used vs allocated bars.
-function allocPanel(k) {
-  const d = state.design; const sub = OWNER[k]; if (!d.alloc) return '';
-  const cf = compliance(d); const live = showBudgets();
-  const row = (label, r, fmt) => {
-    if (!r) return '';
-    const pct = Math.min(100, r.alloc > 0 ? (100 * r.used) / r.alloc : r.used > 0 ? 100 : 0);
-    return `<div class="a-row ${live && r.over ? 'over' : ''}"><div class="kv"><span>${label}</span><b>${live ? `${fmt(r.used)} of ${fmt(r.alloc)}` : `${fmt(r.alloc)} allocated`}</b></div>
-      ${live ? `<i class="a-bar"><u style="width:${pct}%"></u></i>` : ''}${live && r.over ? `<small>Over by ${fmt(r.over)}. Needs a change request at Review, or cut.</small>` : ''}</div>`;
-  };
-  const supply = k === 'power' ? `<div class="a-row ${live && cf.short ? 'over' : ''}"><div class="kv"><span>Supply must cover</span><b>${fW(cf.required)}${live ? ` · yours ${fW(cf.supply)}` : ''}</b></div>${live && cf.short ? '<small>Short. Add arrays or RTG, or ask for lower allocations.</small>' : ''}</div>` : '';
-  return `<h2>${SUB_LABEL[sub]}: your allocation</h2>${row('Cost', cf.rows.find((r) => r.key === `cost.${sub}`), f$)}${row('Power draw', cf.rows.find((r) => r.key === `power.${sub}`), fW)}${supply}`;
+function hudHTML() {
+  if (!showBudgets()) return '<div class="hud"><span>Round 1 flies blind. Pick, then launch.</span></div>';
+  const b = budgets(state.design, ESTIMATE); const M = budgetMargins(b);
+  const g = (label, text, m) => `<span class="g ${marginColor(m)}">${label} <b>${text}</b> <i>${fPct(m)}</i></span>`;
+  return `<div class="hud">${g('Cost', `${f$(b.cost)} of ${f$(b.budget)}`, M.cost)}${g('Lift', b.cap == null ? '–' : `${R(b.wet)} of ${R(b.cap)} kg`, M.mass)}</div>`;
 }
 
-function screenChoice(k) {
-  const step = STEP[k]; const D = dest();
-  const c = consideration(k, D, state.design);
-  const ch = showBudgets() ? charts() : null;
-  return `${header()}<main>${debugBar()}
-    <section class="consider">
-      <div class="eyebrow"><span class="role">${step.role}</span></div>
-      <h1>${esc(c.title)}</h1>
-      <p class="why">${esc(c.why)}</p>
-      <ul class="here">${c.here.map((h) => `<li>${esc(h)}</li>`).join('')}</ul>
-      <div class="feeds"><span>Ripples into</span>${COUPLING[k].map((b) => `<i>${BUDGET_LABEL[b]}</i>`).join('')}</div>
-    </section>
-    <section class="alloc" id="alloc">${allocPanel(k)}</section>
-    <div class="craft-wrap" id="craft">${craftSVG(state.design, { screen: k })}</div>
-    ${step.params ? slidersHTML(step) : optionsHTML(step)}
+function screenBuild() {
+  return `${header()}${hudHTML()}<main>${debugBar()}<h1>Build the spacecraft</h1>
+    <p class="lead">${showBudgets() ? 'Each lead tunes their part against their own gauges. Cost and lift are shared; the rest waits for Review.' : 'Pick a size for each part and pass the phone. This is a flight test: the numbers stay hidden until after the launch.'}</p>
+    ${amendHTML()}<div class="craft-wrap" id="craft">${craftSVG(state.design)}</div>
     <div id="rip">${rippleHTML()}</div>
-    ${ch ? `<section class="graphs"><h2>Your budgets</h2><p class="note">Your subsystem, plus total cost and mass. Blue is your design, orange the limit. Nominal margins: no mass growth, no anomaly. The whole dashboard is at Review.</p><div class="chart-grid" id="chart-grid">${graphsInner(ch, k)}</div></section>` : ''}
-  </main>${nav(canNext())}`;
-}
-
-// Slider moves update only the readouts and graphs, never the sliders themselves.
-function refreshDynamic() {
-  const k = key(); const step = STEP[k];
-  const ch = showBudgets() ? charts() : null;
-  resetCharts();
-  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
-  if (ch) set('chart-grid', graphsInner(ch, k));
-  if (step && step.params) set('live', liveStats(k));
-  set('alloc', allocPanel(k));
-  set('craft', craftSVG(state.design, { screen: k }));
-  set('rip', rippleHTML());
-  const next = document.querySelector('[data-act=next]'); if (next) next.disabled = !canNext();
+    ${SECTIONS.map(sectionHTML).join('')}
+  </main>${nav(true, 'Review')}`;
 }
 
 function screenReview() {
@@ -338,8 +307,7 @@ function screenReview() {
   if (!isComplete(d)) return `${header()}<main><h1>Design review</h1><p>Some parts are missing.</p></main>${nav(false)}`;
   const b = budgets(d, ESTIMATE); const C = b.C; const P = b.P;
   const rows = [
-    ['Contract', C.name], ['Power', P.power.name], ['Thermal', P.thermal.name], ['Antenna', P.comms.name],
-    ['Route', d.traj === 'assist' ? `Assist: ${b.D.traj.assist.label}` : 'Direct'], ['Engine', P.engine.name], ['Fuel', P.tank.name], ['Rocket', P.launcher.name],
+    ['Contract', C.name], ...STEPS.map((s) => [s.label, choiceName(s.key)]),
   ].map(([a, v]) => `<div class="kv"><span>${a}</span><b>${esc(v)}</b></div>`).join('');
   if (!showBudgets()) {
     return `${header()}<main><h1>Final design</h1><p class="lead">${esc(C.name)}. Launch it and see what happens.</p>
@@ -349,38 +317,29 @@ function screenReview() {
   }
   const ch = buildCharts(d, ESTIMATE);
   const keys = CHART_ORDER.filter((k) => ch[k]);
-  const reqs = requirements(d); const cf = compliance(d);
+  const reqs = requirements(d); const ifs = interfaces(d).filter((r) => r.margin != null);
   const reds = reqs.filter((r) => r.status === 'red').length; const yellows = reqs.filter((r) => r.status === 'yellow').length;
   const over = b.cost > b.budget;
-  const ready = !over && cf.ok;
-  const own = (r) => `${SUB_LABEL[r.sub]} · ${r.kind === 'cost' ? 'cost' : 'power'}`;
-  const fmt = (r) => (r.kind === 'cost' ? f$ : fW);
-  const crButton = (r) => {
-    if (!r.over) return '';
-    const ok = r.kind === 'power' || cf.reserve >= r.over;
-    return `<button class="btn small" data-act="cr" data-k="${r.key}" data-amt="${r.over}" ${ok ? '' : 'disabled'}>${r.kind === 'cost' ? `Change request +${f$(r.over)} from reserve` : `Change request +${fW(r.over)}`}</button>`;
-  };
-  const allocRows = cf.rows.filter((r) => r.alloc > 0 || r.used > 0).map((r) => `<div class="vrow ${r.over ? 'red' : 'green'}"><div><div>${own(r)}</div><small>${fmt(r)(r.used)} used of ${fmt(r)(r.alloc)}</small></div>${crButton(r)}</div>`).join('');
+  const ifRow = (r) => `<div class="vrow ${r.status}"><div><div>${r.label} <span class="rmeta">→ ${LEAD[r.to]}</span></div><small>${fmtU(r.need, r.unit)} needed of ${fmtU(r.have, r.unit)} provided</small>${sourcesHTML(r)}</div><span class="r-m">${fPct(r.margin)}</span></div>`;
   return `${header()}<main><h1>Design review</h1>
     <div class="craft-wrap">${craftSVG(d)}</div>
-    <h2>Requirements verification</h2>
+    <h2>System requirements</h2>
     <div class="summary">${reds ? `<b class="red-t">${reds} failing</b> · ` : ''}${yellows ? `<b class="yellow-t">${yellows} thin</b> · ` : ''}${!reds && !yellows ? '<b class="green-t">All verified</b>' : ''}</div>
     <div class="verify">${reqs.map((r) => `<div class="vrow ${r.status}"><b class="rid">${r.id}</b><div><div>${esc(r.text)}</div><small>${r.owner} · ${r.by}</small></div><span class="r-m">${fPct(r.margin)}</span></div>`).join('')}</div>
     <div class="unlock">Nominal margins shown. Launch adds 0–15% dry-mass growth + 1 deep-space anomaly.</div>
-    <h2>Budget allocations</h2>
-    <div class="verify">${allocRows}
-      <div class="vrow ${cf.reserve < 0 ? 'red' : cf.reserve < cf.minReserve ? 'yellow' : 'green'}"><div><div>Cost reserve</div><small>${f$(cf.reserve)} left. Change requests draw on it.</small></div></div>
-      <div class="vrow ${cf.short ? 'red' : 'green'}"><div><div>Power system vs allocations</div><small>Must supply ${fW(cf.required)}. Yours gives ${fW(cf.supply)}.</small></div>${cf.short ? '<button class="btn small" data-act="realloc">Reallocate</button>' : ''}</div></div>
+    <h2>Interface requirements</h2>
+    <p class="note">What each lead asked of the others, and whether it was met.</p>
+    <div class="verify">${ifs.map(ifRow).join('')}</div>
     <details class="picks"><summary>All budget graphs</summary><div class="chart-grid">${keys.map((k) => renderChart(ch[k])).join('')}</div></details>
     <details class="picks"><summary>Your design</summary><div class="costbox">${rows}</div></details>
-    ${over ? `<div class="warn">Launch blocked: over budget by ${f$(b.cost - b.budget)}.</div>` : ''}
-    ${!over && !cf.ok ? '<div class="warn">Launch blocked: an owner is over their allocation, or the power system does not cover the allocated loads. File change requests, redesign, or reallocate.</div>' : ''}
-  </main>${nav(ready, 'Launch')}`;
+    ${over ? `<div class="warn">Launch blocked: over budget by $${R(b.cost - b.budget)}M.</div>` : ''}
+  </main>${nav(!over, 'Launch')}`;
 }
 
 function historyHTML() {
-  return `<div class="history"><b>Past attempts</b>${state.history.map((h) => `<div class="h-row"><span>#${h.attempt} ${esc(h.name)}</span><span class="tier ${h.outcome}">${tierName(h.outcome)}</span><span>${h.score} pts</span><span class="code">${h.code}</span></div>`).join('')}</div>`;
+  return `<div class="history"><b>Rounds</b>${state.history.map((h) => `<div class="h-row"><span>Round ${h.attempt}</span><span class="stars" aria-label="${h.stars} of 3 stars">${starsOf(h.stars)}</span><span>${h.score} pts</span><span class="code">${h.code}</span></div>`).join('')}</div>`;
 }
+const starsOf = (n) => '★'.repeat(n) + '☆'.repeat(3 - n);
 const tierName = (o) => ({ none: 'No mission', min: 'Minimum', full: 'Full success' }[o]);
 
 // ---------- launch screen ----------
@@ -404,7 +363,7 @@ function startLaunch() {
   const cond = { ...launchConditions(state.seed, state.attempt), bailout: state.attempt === 1 };
   const res = simulate(d, cond);
   if (res.b.cost > res.b.budget && cond.bailout) {
-    document.getElementById('banner').innerHTML = `<div class="warn">Over budget by $${R(res.b.cost - res.b.budget)}M — emergency bailout granted for Attempt 1 flight test!</div>`;
+    document.getElementById('banner').innerHTML = `<div class="warn">Over budget by $${R(res.b.cost - res.b.budget)}M — emergency bailout granted for the round 1 flight test!</div>`;
   }
   const b = res.b; const cruise = b.tr.cruise; const end = cruise + b.D.opsYears;
   const f = res.failure;
@@ -489,13 +448,20 @@ function showResult(res) {
   if (key() !== 'launch' || !document.getElementById('result')) return;
   const d = state.design; const D = res.b.D; const C = res.b.C;
   const code = teamCode(d, state.seed, state.attempt);
-  const first = state.attempt === 1;
+  const first = state.attempt === 1; const last = state.attempt >= MAX_ROUNDS;
+  const f = res.failure;
+  // Stars: one for arriving and operating, two for the science goal, three for doing it within 10% of par.
+  const parCost = par(d.contract, d.changed);
+  // Over budget fails R3: a round-1 bailout buys the flight, not the stars.
+  const over = res.cost > res.b.budget;
+  let stars = res.outcome === 'full' ? (res.cost <= parCost * 1.1 ? 3 : 2) : res.outcome === 'min' ? 1 : 0;
+  if (over) stars = Math.min(stars, 1);
+  const rq = f ? requirements(d).find((r) => r.id === reqFor(f)) : null;
   if (!state.history.find((h) => h.attempt === state.attempt)) {
-    state.history.push({ attempt: state.attempt, name: C.name, outcome: res.outcome, score: res.score, code, cost: R(res.cost) });
+    state.history.push({ attempt: state.attempt, name: C.name, outcome: res.outcome, stars, score: res.score, code, cost: R(res.cost), req: rq ? `${rq.id} (${rq.text})` : over ? 'R3 (stay under budget)' : null });
     save();
   }
   const chains = explain(d, res);
-  const f = res.failure;
   const closest = !f ? closestCall(res.b) : null;
   const ev = res.opts.event;
   // The graph of the budget that broke, flown with the real launch conditions.
@@ -505,21 +471,23 @@ function showResult(res) {
   const map = f ? `<p class="a-sub">The failure traces back to these choices:</p>${couplingMap(d, partName, fk)}` : '';
   const later = f ? downstream(res, fk) : [];
   const warnLater = later.length ? `<div class="warn">Downstream Warning: Even if you survived ${fk ? CHART_LABEL[fk].toLowerCase() : 'that'}, this design also failed ${later.map((k) => CHART_LABEL[k].toLowerCase()).join(' and ')}.</div>` : '';
-  const rq = f ? requirements(d).find((r) => r.id === reqFor(f)) : null;
-  const overs = f ? compliance(d).rows.filter((r) => r.over > 0) : [];
+  // Trace the failed requirement back through the interface that carried it: who asked for what.
+  const fr = f ? interfaces(d).find((r) => r.label === failRow(f, res.b)) : null;
+  const top = fr ? [...fr.sources].sort((a, c) => c.v - a.v).slice(0, 2) : [];
   const reqLine = !rq ? '' : `<p class="a-req"><b>${rq.id} not met:</b> ${esc(rq.text)}. Owner: ${rq.owner}.</p>
-      <p class="note">${overs.length ? `Allocation overruns: ${overs.map((r) => `${SUB_LABEL[r.sub]} +${r.kind === 'cost' ? f$(r.over) : fW(r.over)}`).join(', ')}. In a real program each needs a change request.` : 'Every owner stayed inside their allocation, so budget discipline was fine. The requirement itself was the problem.'}</p>`;
+      ${fr && top.length ? `<p class="note"><b>${fr.label}</b> was asked of the ${LEAD[fr.to]}. Biggest demands: ${top.map((s) => `${LEAD[s.from]} (${esc(s.text)}, ${fmtU(s.v, fr.unit)})`).join('; ')}.${fr.have != null ? ` Their design provided ${fmtU(fr.have, fr.unit)}.` : ''}</p>` : ''}`;
   document.getElementById('result').innerHTML = `
     <div class="outcome ${res.outcome}">
+      <div class="o-stars" role="img" aria-label="${stars} of 3 stars">${starsOf(stars)}</div>
       <div class="o-tier">${tierName(res.outcome)}</div>
       <div class="o-grid">
         <div><span>Score</span><b>${res.score}</b></div>
         <div><span>Science</span><b>${fmtGb(res.scienceGb)}</b></div>
-        <div><span>Cost</span><b>$${R(res.cost)}M</b></div>
+        <div><span>Cost</span><b>${f$(res.cost)}</b></div>
         <div><span>Team code</span><b class="code">${code}</b></div>
       </div>
       <div class="o-note">${res.points} science pts × ${D.mult} (${esc(C.name)})</div>
-      ${res.outcome !== 'none' ? `<div class="o-note">Your Cost: $${R(res.cost)}M | Target Par Cost: $${C.par}M</div>` : ''}
+      <div class="o-note">Your Cost: ${f$(res.cost)} | Target Par Cost: ${f$(parCost)}${stars === 2 ? '. Three stars needs a full success within 10% of par.' : over ? '. Over budget: one star at most.' : ''}</div>
     </div>
     ${f ? `<section class="anomaly"><h2>Anomaly report</h2><p class="a-what">${esc(f.text)}</p>
       ${reqLine}${warnLater}
@@ -528,13 +496,13 @@ function showResult(res) {
       <p class="a-sub">The chain of cause and effect:</p>
       ${chains.slice(0, 1).map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('')}
       ${chains.length > 1 ? `<details class="picks"><summary>More causes</summary>${chains.slice(1).map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('')}</details>` : ''}
-      </section>` : `<section class="anomaly good"><h2>Mission report</h2><p>Every constraint held. ${closest ? `Closest call: <b>${closest}</b>.` : ''}</p></section>`}
+      </section>` : over ? `<section class="anomaly"><h2>Requirement check</h2><p class="a-req"><b>R3 not met:</b> Stay under ${f$(res.b.budget)}. Owner: Flight Director.</p><p class="note">The flight worked, but the design cost ${f$(res.cost - res.b.budget)} too much. The bailout bought this flight only. Cost is a requirement like any other.</p></section>`
+      : `<section class="anomaly good"><h2>Mission report</h2><p>Every constraint held. ${closest ? `Closest call: <b>${closest}</b>.` : ''}</p></section>`}
     ${ev ? `<p class="note">Random event: ${esc(ev.text)}</p>` : ''}
-    ${first ? `<div class="unlock"><b>Budgets unlocked.</b> Graphs on every screen. Back works now.</div>` : ''}
+    ${first ? '<div class="unlock"><b>Gauges unlocked.</b> Back works now. Next, the customer changes the contract.</div>' : ''}
     ${historyHTML()}
     <div class="end-actions">
-      <button class="btn primary" data-act="redesign">Redesign · Attempt ${state.attempt + 1}</button>
-      <button class="btn ghost" data-act="newcontract">Change contract</button>
+      ${last ? '<button class="btn primary" data-act="finish">Mission debrief</button>' : `<button class="btn primary" data-act="redesign">Round ${state.attempt + 1}: ${first ? 'the contract changes' : 'final attempt'}</button>`}
     </div>`;
   document.querySelector('.ff')?.remove();
   if (!DEBUG) document.getElementById('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -555,37 +523,54 @@ function closestCall(b) {
   return m ? `${m[0]} margin ${R(m[1] * 100)}%` : null;
 }
 
+// ---------- debrief ----------
+function screenDebrief() {
+  const hs = state.history;
+  const best = hs.reduce((a, h) => (!a || h.score > a.score || (h.score === a.score && h.stars > a.stars) ? h : a), null);
+  const total = hs.reduce((s, h) => s + h.stars, 0);
+  const first = hs[0];
+  const lessons = [];
+  if (first && first.stars < 2) lessons.push(['A flight test finds what paper cannot.', `Round 1 ${first.outcome === 'none' ? 'failed' : 'fell short'}${first.req ? ` on ${first.req}` : ''}. Every failure traced back to a choice someone made for good reasons.`]);
+  lessons.push(['Requirements flow down.', 'A choice by one lead became a requirement on another: the transmitter loaded Power, the fuel loaded the rocket, the route set the radiation dose.']);
+  lessons.push(['Requirements change.', `In round 2 the contract was amended (${amendment() || 'new goal and funding'}). A design is only as good as its latest requirements.`]);
+  lessons.push(['Margin is a choice.', `Your final design's closest call: ${closestCall(budgets(state.design, ESTIMATE)) || 'n/a'}. Launch adds mass growth and one surprise, so thin margin is a bet.`]);
+  return `${header()}<main><h1>Mission debrief</h1>
+    <div class="outcome ${best.outcome}">
+      <div class="o-stars" role="img" aria-label="${best.stars} of 3 stars">${starsOf(best.stars)}</div>
+      <div class="o-tier">Best: round ${best.attempt}</div>
+      <div class="o-grid">
+        <div><span>Stars earned</span><b>${total} of ${MAX_ROUNDS * 3}</b></div>
+        <div><span>Best score</span><b>${best.score}</b></div>
+        <div><span>Best cost</span><b>${f$(best.cost)}</b></div>
+        <div><span>Team code</span><b class="code">${best.code}</b></div>
+      </div>
+    </div>
+    ${historyHTML()}
+    <section class="anomaly good"><h2>What you practised</h2>${lessons.map(([t, x]) => `<p><b>${t}</b> ${esc(x)}</p>`).join('')}</section>
+    <div class="end-actions"><button class="btn primary" data-act="newgame">New mission</button></div>
+  </main>`;
+}
+
 // ---------- render + events ----------
+const SCREENS = { contract: screenContract, reqs: screenReqs, build: screenBuild, review: screenReview, launch: screenLaunch, debrief: screenDebrief };
+
 function render() {
   if (anim) { clearTimeout(anim); anim = null; }
   resetCharts();
   const k = key();
-  let html = '';
-  if (k === 'contract') html = screenContract();
-  else if (k === 'reqs') html = screenReqs();
-  else if (k === 'alloc') html = screenAlloc();
-  else if (k === 'review') html = screenReview();
-  else if (k === 'launch') html = screenLaunch();
-  else html = screenChoice(k);
-  $app.innerHTML = html;
+  $app.innerHTML = SCREENS[k]();
   if (k === 'launch') startLaunch();
 }
 
-function go(n) { state.step = n; ripple = null; dragBefore = null; save(); render(); window.scrollTo(0, 0); }
-const stepOf = (k) => FLOW.indexOf(k);
+function go(n) { state.step = n; ripple = null; save(); render(); window.scrollTo(0, 0); }
 
 function autoPick(mode) {
   if (!state.design.contract) return;
   if (mode === 'good') {
-    const best = cheapestFull(state.design.contract); if (best) state.design = { ...best.d, alloc: fitAlloc(best.d), cr: {} };
+    const best = cheapestFull(state.design.contract, NOMINAL, state.design.changed); if (best) state.design = { ...best.d };
   } else {
     const rng = mulberry32(Date.now() & 0xffffffff);
-    for (const [k, p] of Object.entries(PARAMS)) {
-      const steps = Math.round((p.max - p.min) / p.step);
-      state.design[k] = +(p.min + Math.floor(rng() * (steps + 1)) * p.step).toFixed(2);
-    }
-    if (!state.design.solarArea && !state.design.rtgUnits) state.design.solarArea = 8;
-    for (const s of STEPS) if (s.list) state.design[s.key] = s.list[Math.floor(rng() * s.list.length)].id;
+    for (const s of STEPS) setChoice(s.key, s.list[Math.floor(rng() * s.list.length)].id);
   }
   save(); render();
 }
@@ -595,61 +580,28 @@ $app.addEventListener('click', (e) => {
   const act = el.dataset.act;
   const keepScroll = () => { const y = window.scrollY; render(); window.scrollTo(0, y); };
   if (act === 'contract') {
-    state.design.contract = el.dataset.id;
-    state.design.alloc = defaultAlloc(contract()); state.design.cr = {};
-    save(); render();
-  } else if (act === 'cr') {
-    // Change request: the Flight Director approves it, and it draws on the reserve (cost) or grows the power the supply must cover.
-    const d = state.design; const amt = +el.dataset.amt; const k = el.dataset.k;
-    if (k.startsWith('cost.') && costReserve(d, contract()) < amt) return;
-    d.cr = { ...d.cr, [k]: (d.cr[k] || 0) + amt };
-    save(); keepScroll();
-  } else if (act === 'realloc') go(stepOf('alloc'));
-  else if (act === 'pick') {
+    state.design.contract = el.dataset.id; save(); render();
+  } else if (act === 'pick') {
     const before = showBudgets() ? margins() : null;
-    state.design[el.dataset.slot] = el.dataset.id;
+    setChoice(el.dataset.slot, el.dataset.id);
     ripple = computeRipple(before, showBudgets() ? margins() : null);
+    if (ripple) ripple.who = OWNER[el.dataset.slot];
     save(); keepScroll();
   } else if (act === 'ff') {
     speed = speed === 1 ? 2 : 1;
     el.setAttribute('aria-pressed', String(speed === 2));
-  } else if (act === 'next') {
-    if (key() === 'contract' && DEBUG && !state.design.engine) autoPick('random');
-    go(Math.min(FLOW.length - 1, state.step + 1));
-  } else if (act === 'back') { if (canGoBack()) go(Math.max(0, state.step - 1)); }
-  else if (act === 'redesign') { state.attempt += 1; go(stepOf('alloc')); }
-  else if (act === 'newcontract') { state.attempt += 1; go(stepOf('contract')); }
+  } else if (act === 'next') go(Math.min(FLOW.length - 1, state.step + 1));
+  else if (act === 'back') { if (canGoBack()) go(Math.max(0, state.step - 1)); }
+  else if (act === 'redesign') { state.attempt += 1; state.design.changed = true; go(stepOf('reqs')); }
+  else if (act === 'finish') go(stepOf('debrief'));
+  else if (act === 'newgame') { state = { ...fresh(), seed: state.seed }; save(); render(); window.scrollTo(0, 0); }
   else if (act === 'reset') {
-    if (confirm('Start over as a new team? This clears all attempts.')) { state = fresh(); save(); render(); }
+    if (confirm('Start over as a new team? This clears all rounds.')) { state = fresh(); save(); render(); }
   } else if (act === 'dbg-random') autoPick('random');
   else if (act === 'dbg-good') autoPick('good');
 });
 
-// Sliders: update the design and the readouts live, and show what moved when you let go.
-$app.addEventListener('input', (e) => {
-  const el = e.target;
-  if (el.matches && el.matches('input[type=range][data-alloc]')) {
-    const [kind, id] = el.dataset.alloc.split('.'); const v = parseFloat(el.value);
-    state.design.alloc[kind][id] = v;
-    document.getElementById(`ao-${kind}-${id}`).textContent = kind === 'cost' ? f$(v) : fW(v);
-    document.getElementById('alloc-sum').innerHTML = allocSummary();
-    document.querySelector('[data-act=next]').disabled = !canNext();
-    save(); return;
-  }
-  if (!el.matches || !el.matches('input[type=range][data-key]')) return;
-  const k = el.dataset.key;
-  if (dragBefore === null && showBudgets()) dragBefore = margins();
-  state.design[k] = parseFloat(el.value);
-  const out = document.getElementById(`out-${k}`); if (out) out.textContent = fmtV(state.design[k], PARAMS[k]);
-  save(); refreshDynamic();
-});
-$app.addEventListener('change', (e) => {
-  const el = e.target; if (!el.matches || !el.matches('input[type=range][data-key]')) return;
-  if (dragBefore) { ripple = computeRipple(dragBefore, margins()); refreshDynamic(); }
-  dragBefore = null;
-});
-
-// If the page was reloaded mid-launch, replay the launch for this attempt.
+// If the page was reloaded mid-launch, replay the launch for this round.
 render();
 
 // Expose for quick console checks.

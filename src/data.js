@@ -138,18 +138,46 @@ export const PAYLOADS = [
 // ---------- Contracts ----------
 // The hard constraints: where, which instrument, how much science, arrive by the deadline
 // (years after launch), and the funding cap (the contract ends when the money does).
-// par: cheapest full-success cost found by the solver (npm run balance checks it). Funding is
-// set so par keeps ~12% cost margin: a design with a green cost bar is too cheap to be robust.
+// The par cost (cheapest full success) is computed live by the solver in model.js. Funding is
+// set about 12% above par (npm run balance checks it): a design with a green cost bar is too
+// cheap to be robust. `change` is the amendment that lands from round 2: it patches the
+// contract and makes the round-1 winner stop winning.
 export const CONTRACTS = [
-  { id: 'lunar-survey', name: 'Lunar Pathfinder', dest: 'moon', payload: 'cam', goalGb: 70, deadline: 0.25, budget: 235, par: 207, brief: 'Land near the south pole. Fast and cheap.' },
-  { id: 'lunar-spec', name: 'South Pole Spectrometry', dest: 'moon', payload: 'spec', goalGb: 300, deadline: 0.5, budget: 275, par: 242, brief: 'Survive the lunar night and map the ice.' },
-  { id: 'mars-survey', name: 'Mars Survey Lander', dest: 'mars', payload: 'cam', goalGb: 150, deadline: 1.5, budget: 250, par: 222, brief: 'Ride out the dust storm and send pictures home.' },
-  { id: 'mars-radar', name: 'Mars Subsurface Radar', dest: 'mars', payload: 'hires', goalGb: 1500, deadline: 3, budget: 365, par: 321, brief: 'Radar under the surface. Heavy, hungry, huge data.' },
-  { id: 'mercury-survey', name: 'Mercury Surveyor', dest: 'mercury', payload: 'cam', goalGb: 150, deadline: 8, budget: 305, par: 268, brief: 'Orbit Mercury and map the surface.' },
-  { id: 'europa-spec', name: 'Europa Flyby Spectrometry', dest: 'europa', payload: 'spec', goalGb: 90, deadline: 7, budget: 550, par: 485, brief: 'Fly past Europa before the radiation wins.' },
-  { id: 'pluto-survey', name: 'Pluto Flyby Imaging', dest: 'pluto', payload: 'cam', goalGb: 1.6, deadline: 10, budget: 545, par: 481, brief: 'A decade out. Send the pictures home.' },
-  { id: 'pluto-spec', name: 'Pluto Flyby Spectrometry', dest: 'pluto', payload: 'spec', goalGb: 1.6, deadline: 9, budget: 630, par: 553, brief: 'The same trip, a hungrier instrument, a tighter deadline.' },
+  { id: 'lunar-survey', name: 'Lunar Pathfinder', dest: 'moon', payload: 'cam', goalGb: 70, deadline: 0.25, budget: 350, brief: 'Land near the south pole. Fast and cheap.', change: { patch: { payload: 'hires', goalGb: 300, budget: 455 } }  },
+  { id: 'lunar-spec', name: 'South Pole Spectrometry', dest: 'moon', payload: 'spec', goalGb: 300, deadline: 0.5, budget: 390, brief: 'Survive the lunar night and map the ice.', change: { patch: { payload: 'hires', goalGb: 900, budget: 450 } } },
+  { id: 'mars-survey', name: 'Mars Survey Lander', dest: 'mars', payload: 'cam', goalGb: 150, deadline: 1.5, budget: 265, brief: 'Ride out the dust storm and send pictures home.', change: { patch: { payload: 'spec', goalGb: 225, budget: 310 } } },
+  { id: 'mars-radar', name: 'Mars Subsurface Radar', dest: 'mars', payload: 'hires', goalGb: 1500, deadline: 3, budget: 365, brief: 'Radar under the surface. Heavy, hungry, huge data.', change: { patch: { goalGb: 2250, budget: 390 } } },
+  { id: 'mercury-survey', name: 'Mercury Surveyor', dest: 'mercury', payload: 'cam', goalGb: 150, deadline: 8, budget: 305, brief: 'Orbit Mercury and map the surface.', change: { patch: { payload: 'spec', goalGb: 450, budget: 355 } } },
+  { id: 'europa-spec', name: 'Europa Flyby Spectrometry', dest: 'europa', payload: 'spec', goalGb: 90, deadline: 7, budget: 615, brief: 'Fly past Europa before the radiation wins.', change: { patch: { payload: 'hires', goalGb: 135, budget: 810 } } },
+  { id: 'pluto-survey', name: 'Pluto Flyby Imaging', dest: 'pluto', payload: 'cam', goalGb: 1.6, deadline: 10, budget: 560, brief: 'A decade out. Send the pictures home.', change: { patch: { payload: 'spec', goalGb: 2.4, budget: 635 } } },
+  { id: 'pluto-spec', name: 'Pluto Flyby Spectrometry', dest: 'pluto', payload: 'spec', goalGb: 1.6, deadline: 9, budget: 635, brief: 'The same trip, a hungrier instrument, a tighter deadline.', change: { patch: { payload: 'hires', goalGb: 2.4, budget: 830 } } },
 ];
+
+// Chunky choices. Each preset sets the slider values the physics already uses.
+// The 'm' preset of every slot is the starter design.
+export const PRESETS = {
+  comms: [
+    { id: 's', name: 'Small dish', blurb: 'Light and frugal. Slow downlink.', set: { dish: 0.5, txPower: 15 } },
+    { id: 'm', name: 'Medium dish', blurb: 'A balanced link.', set: { dish: 1.2, txPower: 40 } },
+    { id: 'l', name: 'Large dish', blurb: 'Fast downlink. Heavy, hungry, hot.', set: { dish: 2.5, txPower: 70 } },
+  ],
+  tank: [
+    { id: 's', name: 'Small tank', blurb: 'Light. Short on speed change.', set: { fuel: 300 } },
+    { id: 'm', name: 'Medium tank', blurb: 'A fair load of fuel.', set: { fuel: 700 } },
+    { id: 'l', name: 'Large tank', blurb: 'Lots of speed change. Lots of mass.', set: { fuel: 1200 } },
+  ],
+  thermal: [
+    { id: 's', name: 'Light blankets', blurb: 'Light. Little cooling or shielding.', set: { radiator: 1, shield: 1 } },
+    { id: 'm', name: 'Radiator panels', blurb: 'Sheds heat. Leaks it in the cold.', set: { radiator: 8, shield: 2 } },
+    { id: 'l', name: 'Shielded vault', blurb: 'Blocks radiation and insulates. Heavy.', set: { radiator: 2, shield: 7 } },
+  ],
+  power: [
+    { id: 's', name: 'Small arrays', blurb: 'Light and cheap. Weak far from the Sun.', set: { solarArea: 8, rtgUnits: 0, battery: 6 } },
+    { id: 'm', name: 'Large arrays + battery', blurb: 'Plenty of power near the Sun.', set: { solarArea: 24, rtgUnits: 0, battery: 20 } },
+    { id: 'l', name: 'RTG', blurb: 'Steady anywhere. Heavy, pricey, warm.', set: { solarArea: 0, rtgUnits: 1, battery: 6 } },
+    { id: 'x', name: 'Twin RTG', blurb: 'Lots of steady power. Heavier, pricier, hotter.', set: { solarArea: 0, rtgUnits: 2, battery: 6 } },
+  ],
+};
 
 export const ENGINES = [
   { id: 'mono', name: 'Monoprop thrusters', blurb: 'Simple and light. Low efficiency.', mass: 12, cost: 8, isp: 225, thrustN: 100, life: 15 },
@@ -180,13 +208,15 @@ export const RANDOM_EVENTS = [
 ];
 
 // The design screens after the contract, in order. `list` marks a discrete choice;
-// `params` are the sliders shown on that screen.
+// `params` are the sliders shown on that screen. Loads come first (antenna, route, engine,
+// fuel), then thermal and power are sized to what everyone else asks of them, then the
+// rocket has to lift the result. A late choice can break an earlier lead's budget.
 export const STEPS = [
-  { key: 'power', label: 'Power', role: 'Spacecraft bus', params: ['solarArea', 'rtgUnits', 'battery'] },
-  { key: 'thermal', label: 'Thermal', role: 'Spacecraft bus', params: ['radiator', 'shield'] },
-  { key: 'comms', label: 'Antenna', role: 'Spacecraft bus', params: ['dish', 'txPower'] },
+  { key: 'comms', label: 'Antenna', role: 'Spacecraft bus', list: PRESETS.comms },
   { key: 'traj', label: 'Route', role: 'Mission plan', list: TRAJECTORIES },
   { key: 'engine', label: 'Engine', role: 'Propulsion', list: ENGINES },
-  { key: 'tank', label: 'Fuel', role: 'Propulsion', params: ['fuel'] },
+  { key: 'tank', label: 'Fuel', role: 'Propulsion', list: PRESETS.tank },
+  { key: 'thermal', label: 'Thermal', role: 'Spacecraft bus', list: PRESETS.thermal },
+  { key: 'power', label: 'Power', role: 'Spacecraft bus', list: PRESETS.power },
   { key: 'launcher', label: 'Rocket', role: 'Launch vehicle', list: LAUNCHERS },
 ];

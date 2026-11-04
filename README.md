@@ -1,43 +1,45 @@
 # Mission Design
 
-A 20-minute classroom demo for engineering freshmen. Teams of 5 share one phone, design a
-space mission, launch it, and usually fail the first time. The anomaly report traces the
-failure back through the coupling chain to the team's own choices. Round 2 is a 3-5 minute
-redesign.
-
-Built to go with a talk on **coupling** in spacecraft mission design: every choice feeds several
-budgets, and a failure is rarely where its cause is.
-
-The loop follows KSP RP-1: **take a contract, build the spacecraft bus, choose the launcher**.
-
-1. **Contract board.** Eight contracts, each fixing the target, the required instrument, the
-   science goal, a deadline (arrive within N years of launch) and the funding cap.
-2. **Spacecraft bus.** Sliders size the parts: solar array area, RTG units, battery (Moon only),
-   radiator area, radiation shielding, dish diameter, transmitter power. Each slider shows its own
-   mass, cost and performance at the target as you move it.
-3. **Mission plan and propulsion.** Route (Direct or Assist) trades the deadline against rocket
-   size and cost. Engine is a short list of real options, and fuel is a slider.
-4. **Launch vehicle.** Picked last, once the mass is locked in. Then review and launch.
-
-The spacecraft is drawn from your sliders and updates as you build (the part you are sizing lights up).
-The launch plays as an animation: liftoff, cruise along the route, then landing or orbit with a downlink
-beam home. A failure freezes it with a red mark where it happened.
-
-Each screen has a two-line intro for the chosen contract (e.g. "Power at Pluto") and a
-"Ripples into" row naming the budgets that choice feeds.
-
-- **Attempt 1:** no budgets and no Back button. The team commits, launches, and (usually) fails.
-  The anomaly report shows the graph of the budget that broke, plus a coupling map: every choice
-  that feeds the failed budget lights up red.
-- **Attempt 2+:** Back is allowed, and budgets appear as graphs over mission time: power
-  available vs needed, heat vs thermal limit, radiation dose, data sent vs goal, money spent vs
-  budget, mass vs launcher, delta-v vs the arrival burn, part life vs mission length (and the
-  battery through the lunar night for the Moon), plus schedule: arrival vs the contract deadline.
-  A row of chips at the top shows every budget's status; tap one to add its graph. Sliders update
-  the graphs live.
-
+A 20-minute classroom demo for engineering freshmen. Teams of five share one phone, take a space
+mission contract, build a spacecraft together as four leads, launch it, and learn from what breaks.
 Static, client-only (Vite + vanilla JS). No backend, no accounts, no network calls after load.
-Geist and Geist Mono are bundled from npm (`@fontsource-variable`), so fonts work offline.
+
+## The game
+
+Three rounds, about five minutes each.
+
+1. **Contract.** Pick one of eight missions (Moon, Mars, Mercury, Europa, Pluto). Each fixes the
+   instrument, the science goal, the deadline and the funding.
+2. **Requirements.** The contract becomes seven numbered requirements (R1 data, R2 schedule, R3 funding,
+   R4 the destination's hazard, R5 lift, R6 arrival burn, R7 stay powered/cool/alive), each with an owner.
+3. **Build** on one board. The spacecraft starts as a flying baseline. Four leads take the phone in turn
+   and choose a size for their part: **Comms** (antenna), **Propulsion & Trajectory** (route, engine,
+   fuel), **Power & Thermal** (thermal, power), **Flight Director** (rocket). Every choice is a few
+   chunky options, not a slider.
+4. **Review**, then **launch** (about 30 seconds, with a 2x button from round 2).
+5. **Result**: up to three stars. ★ you arrived and operated, ★★ you met the science goal, ★★★ you did it
+   within 10% of the par cost (the cheapest possible design). Going over budget fails R3 and caps the
+   round at one star.
+
+**Round 1 is a blind flight test.** No gauges, no Back button; an over-budget design still flies (a
+bailout). Most teams fail, and the anomaly report names the requirement that failed, its owner, and
+which lead's demands caused it.
+
+**Round 2: the contract changes.** The customer amends it (a better instrument, a bigger science goal,
+more funding), so the round-1 design no longer fits. Gauges unlock: each lead sees only their own
+(silos), cost and lift are shared, and the full dashboard waits for Review. When a choice hurts a budget
+someone else owns, a **change notice** names that lead.
+
+**Round 3: final attempt**, then a **debrief**: stars, best score, team code, and what the team practised.
+
+### Systems engineering in it
+
+- Requirements flow down: a choice by one lead puts requirements on another (a 40 W radio means Power
+  must supply 120 W because the amplifier is 33% efficient, and Thermal must reject its heat). Each lead's
+  "Who needs what" shows what is asked of them and what their choices ask of others.
+- Margins are nominal. Launch adds 0-15% dry-mass growth and one anomaly, and funding is set so no design
+  can have every margin green, so some margin is always a bet.
+- Requirements change, and late choices break earlier leads' budgets.
 
 ## Run locally
 
@@ -49,8 +51,7 @@ npm install
 npm run dev
 ```
 
-`npm run dev` serves on your LAN too (`--host`), so phones on the same Wi-Fi can open
-`http://<your-laptop-ip>:5173`.
+`npm run dev` serves on your LAN (`--host`), so phones on the same Wi-Fi can open `http://<your-laptop-ip>:5173`.
 
 ## Balance test
 
@@ -58,32 +59,19 @@ npm run dev
 npm run balance
 ```
 
-This sweeps a coarse grid over every slider and choice (about 83,000 designs per contract, 330,000 for
-the Moon, which also sweeps battery size) through the same `src/model.js` the app uses. It prints, per contract:
+Every contract has 1,944 designs (4 antennas × 3 thermal × 4 power × 3 tanks × 3 engines × 2 routes × 3
+rockets). The test plays all of them through the same `src/model.js` the app uses, for both the original
+and the amended contract, and checks that:
 
-- full / minimum / any success rate (nominal launch: 7.5% mass growth, no random event)
-- first-failure mode counts
-- how often each constraint passes on its own (useful when tuning)
-- which slider values and choices appear in successful designs, and Direct vs Assist counts
-- the cheapest full-success design
+- every contract has winners (7-49 each) and funding keeps the par cost 10-14% inside it
+- no design has every bar green, and the best winner runs 5-14% thin
+- the amended contract is still winnable at about 12% margin, and the round-1 cheapest design no longer wins
+- each contract has at least three reachable failure modes including its own hazard
+- interface demands add up to the need (power, heat, lift, cost), and a failure traces to the interface in deficit
+- an over-budget design flies in round 1
 
-and then a PASS/FAIL list against the tuning targets. Add `--seeds` to also average success over
-seeds 1-20 (real launch conditions).
-
-All numbers live in [`src/data.js`](src/data.js). Change them, rerun `npm run balance`, repeat.
-
-Current results (all checks pass):
-
-| Destination | Multiplier | Full success | Failure modes | Direct / Assist successes |
-|---|---|---|---|---|
-| Mercury | ×2.5 | 6.2% | 8 | 160 / 111 |
-| Moon | ×1.3 | 5.6% | 5 | 111 / 135 |
-| Mars | ×1.0 | 9.6% | 7 | 199 / 223 |
-| Europa | ×1.8 | 5.6% | 7 | 118 / 128 |
-| Pluto | ×2.5 | 5.8% | 7 | 142 / 112 |
-
-Notes on what is forced (on purpose): Mercury needs radiators; Pluto needs an RTG. No option
-appears in every successful design across all destinations.
+Add `--seeds` to also average success over seeds 1-20. All numbers live in [`src/data.js`](src/data.js)
+(including the preset sizes and each contract's `change`). Change them, rerun `npm run balance`, repeat.
 
 ## Deploy to GitHub Pages
 
@@ -93,7 +81,7 @@ The Vite config uses a relative base (`base: './'`), so the build works under an
 
 1. Push this folder to a GitHub repo.
 2. In the repo: Settings → Pages → Build and deployment → Source: **GitHub Actions**.
-3. The included workflow `.github/workflows/deploy.yml` builds and deploys on every push to `main`.
+3. The included workflow `.github/workflows/deploy.yml` runs the balance test, builds and deploys on every push to `main`.
 4. Your URL is `https://<user>.github.io/<repo>/`.
 
 **Option B: manual**
@@ -102,8 +90,8 @@ The Vite config uses a relative base (`base: './'`), so the build works under an
 npm run build
 ```
 
-Then publish the `dist/` folder (for example push it to a `gh-pages` branch and set
-Pages → Source → Deploy from branch → `gh-pages` / root).
+Then publish the `dist/` folder (for example push it to a `gh-pages` branch and set Pages → Source →
+Deploy from branch → `gh-pages` / root).
 
 Make a QR code of the URL (add `?seed=N` so every team gets the same launch conditions) and put it on a slide.
 
@@ -111,74 +99,49 @@ Make a QR code of the URL (add `?seed=N` so every team gets the same launch cond
 
 | Flag | Effect |
 |---|---|
-| `?seed=N` | Fixed randomness. Every phone with the same seed gets the same hidden mass growth and the same random event for each attempt number. Without it, each phone picks its own seed. |
-| `?debug` | Shows "Random design" / "Cheapest full success" buttons on the build screens, auto-picks a random design when you leave the contract board, and skips all timers. Full flow in ~30 seconds. |
-
-| `?demo` | Contract board shows only Lunar Pathfinder, Mars Survey Lander and Europa Flyby Spectrometry (three different traps). Good for a 20-minute session. |
+| `?seed=N` | Fixed randomness. Every phone with the same seed gets the same hidden mass growth and random event for each round. Without it, each phone picks its own seed. |
+| `?debug` | Shows "Random design" / "Cheapest full success" buttons on the build board and skips all timers. A full three-round game in about a minute. |
+| `?demo` | The contract board shows only Lunar Pathfinder, Mars Survey Lander and Europa Flyby Spectrometry (three different traps). Good for a 20-minute session. |
 
 Combine them: `?seed=7&demo` (add `&debug` to rehearse).
 
-Funding is set from each contract's `par` cost in `src/data.js` (the cheapest full success the solver finds), so par keeps about 12% cost margin. If you change any number, rerun `npm run balance`: it fails if `par` is stale, if any design can get every bar green, or if the best winning design isn't 5-14% thin.
-
-## The systems-engineering loop
-
-1. **Contract** → **Requirements**: the contract becomes seven numbered requirements (R1 data, R2 schedule, R3 funding, R4 the destination's hazard, R5 lift, R6 arrival burn, R7 stay powered/cool/alive), each with an owner and the choices that satisfy it.
-2. **Allocation** (Flight Director): split the funding between Power & Thermal, Comms, Propulsion & Trajectory and Launch, and set the power each load may draw (heaters, transmitter, ion engine). What isn't allocated is reserve, and at least 5% of the cap must be held back. The power system must then be sized to cover bus + instrument + every allocated load.
-3. **Design** (pass the phone): each lead sees their own allocation. From attempt 2 they also see used vs allocated.
-4. **Review** (attempt 2+): a requirements verification matrix, then allocation compliance. An owner over their allocation needs a **change request**: cost requests draw on the reserve, power requests raise the load the power system must cover. Launch is blocked until every owner is inside their allocation and the power system covers the allocated loads. The full budget graphs sit behind "All budget graphs".
-5. **Anomaly report**: names the requirement that failed, its owner, and any allocation overruns.
-
-Attempt 1 stays blind and unblocked (the bailout still applies), so every team fails once and then sees the whole process.
-
-`npm run balance` checks that the cheapest winner of every contract fits inside its own fitted allocation with reserve intact, that the naive even split does not, and that the default split keeps the minimum reserve. Allocations do not change the physics: they are accountability, not extra failure modes.
-
 ## How the model works (short)
 
-- **Parts are formulas.** Each slider sets a size and the formulas in `src/data.js` return mass, cost and performance (for example array area × 150 W/m² at Earth, dish area × transmitter power for data rate).
-- **Contract**: the instrument, science goal, deadline and funding come from the contract. Missing the deadline expires the contract mid-trip.
-- **Mass**: instrument + power + thermal + antenna + engine + fuel tank + bus, plus 25% structure; propellant on top. A hidden 0-15% mass growth (seeded) is applied at launch and never shown before it.
-- **Launcher**: capacity falls with launch energy (C3). Direct needs more energy than Assist.
-- **Delta-v**: rocket equation from engine Isp and tank size. The ion engine needs 600 W at arrival and extra delta-v (low thrust); it cannot land on the Moon.
-- **Power**: solar falls with 1/r² and degrades each year (faster near Mercury and Jupiter); RTGs are constant but decay 1.5%/yr, and each adds waste heat. You can mix both. Load = bus + instrument + antenna + heaters.
-- **Thermal**: hot side checks sunlight vs the radiator limit (RTG adds heat); cold side shows up as heater power (RTG waste heat offsets it).
+- **Parts are formulas.** Each preset sets sizes (array area, RTG units, dish and transmitter power, radiator
+  area, shielding, fuel) and the formulas in `src/data.js` return mass, cost and performance.
+- **Mass**: bus + instrument + parts, plus 25% structure; fuel on top. A hidden 0-15% mass growth (seeded) is applied at launch.
+- **Launcher**: capacity falls with launch energy. Direct needs more energy than Assist.
+- **Delta-v**: rocket equation from engine Isp and fuel. The ion engine needs 600 W at arrival and extra delta-v.
+- **Power**: solar falls with 1/r² and degrades each year; RTGs are constant but decay 1.5%/yr. Load = bus + instrument + transmitter (3 W per radio watt) + heaters.
+- **Thermal**: sunlight (plus RTG and amplifier waste heat) against the radiator limit; the cold side shows up as heater power, and radiators leak heat in the cold.
 - **Data**: returned = min(generated, downlinked); downlink falls with 1/r² from Earth.
-- **Radiation**: dose from cruise, destination, Jupiter flyby, and solar flare event vs your shielding's tolerance.
-- **Cost**: parts + launcher + ops ($/yr × mission years). Over budget blocks launch at review.
-- **Duration**: every part has a design life. Longer (Assist) missions can outlive parts.
-- **Unique hazards**: Mercury 10x sun (overheat), Moon 14-day night (battery), Mars dust storm (solar -80%), Europa radiation, Pluto faint signal (downlink).
-
-Outcome: **No mission** / **Minimum success** (arrived and operated) / **Full success** (survived and hit the data goal).
-Score = science points (100 = data goal, capped at 150) × destination multiplier.
+- **Radiation**: dose from the trip, the destination, flybys and flares, against the shielding.
+- **Cost**: parts + rocket + operations ($/year × mission years). Over budget fails R3.
+- **Design life**: every part has one; longer missions can outlive parts.
+- **Hazards**: Mercury 10x sun, Moon 14-day night, Mars dust storm, Europa radiation, Pluto faint signal.
 
 ## Manual test checklist (multiple phones)
 
-Before class, on 3-4 phones (or 3-4 browser tabs, at least one on a real phone):
+Open the URL on 3-4 phones (or tabs, at least one real phone):
 
-- [ ] Open the URL (via QR code) on every phone. The contract board shows 8 contracts with instrument, science goal, deadline, funding and hazard.
-- [ ] Attempt 1: each design screen shows the intro, then sliders or options; no Back button, no budget graphs, and the review is a parts list. An over-budget design can launch and is cancelled at program review.
-- [ ] Sliders: dragging one updates its mass, cost and performance readout live; the RTG-only and solar-only power cases both work; power cannot be zero.
-- [ ] A slow route misses a tight deadline: Mars Survey Lander + Assist fails with "Contract expired" and the Schedule graph.
-- [ ] Attempt 1 failure: the anomaly report includes the graph of the broken budget, and a "Budgets unlocked" note.
-- [ ] Attempt 2: Back works; the budget chips stay pinned; every tap updates the graphs and chips (e.g. Pluto: small solar → Power red, RTG → Power green).
-- [ ] Touch a graph: a crosshair and readout appear.
-- [ ] Attempt 2 review shows every budget graph; over-budget designs cannot launch.
-- [ ] Launch runs ~30 s: liftoff, cruise year bar with event markers, arrival burn, operations. A failure stops the animation.
-- [ ] Results show tier, score, cost and a team code; failures show an anomaly report with a cause chain and numbers.
-- [ ] "Redesign" returns to the power screen with all choices kept and "Attempt 2" in the header.
-- [ ] **Seed test:** open `?seed=5` on two phones, build the identical design, launch: both get the same outcome, random event and team code. Open `?seed=6` on a third with the same design: the random event may differ.
-- [ ] **Debug test:** open `?debug`, pick a contract, Next through to launch: values are auto-picked and the launch result appears instantly. Try "Cheapest full success" (takes a second or two) to see a passing design.
-- [ ] Refresh mid-build: choices are kept. Refresh after a launch: the result shows again without replaying.
-- [ ] "Start over (new team)" on the contract board clears attempts for the next group.
+- [ ] Contract board shows the contracts (3 with `?demo`); picking one and tapping Next shows seven requirements.
+- [ ] The build board shows four "Pass phone →" sections with chunky options; the craft drawing updates; the baseline is preselected.
+- [ ] Round 1: no gauges, "Round 1 flies blind", no Back button. Review lists the choices. Launch runs about 30 s.
+- [ ] An over-budget round 1 shows the bailout banner, and the result is capped at one star with "R3 not met".
+- [ ] A failing round names the requirement, the owner, and the biggest demands behind it.
+- [ ] Round 2: the requirements screen shows a "Contract amendment" banner; the build board now shows each lead's gauges and a Cost/Lift bar; the 2x button works on the launch.
+- [ ] Choosing Twin RTG (or a large dish) shows a "Change notice" naming another lead.
+- [ ] Review (round 2+) shows system requirements, interface requirements and "All budget graphs"; over-budget designs cannot launch.
+- [ ] Result shows stars, score, "Your Cost | Target Par Cost" and a team code; round 3 ends with "Mission debrief".
+- [ ] **Seed test:** `?seed=5` on two phones, build the same design, launch: same outcome, event and team code.
+- [ ] **Debug test:** `?debug` → "Cheapest full success" builds a winning design that flies to ★★★.
+- [ ] Refresh mid-game keeps progress; refreshing a launched round shows its result without replaying.
+- [ ] "Start over (new team)" on the contract board clears the rounds; the debrief's "New mission" restarts.
 
 ## Files
 
-- `src/data.js`: every tunable number (destinations, contracts, part formulas, slider ranges, launchers, events).
-- `src/model.js`: physics, launch simulation, anomaly chains. No DOM; shared with the balance script.
-- `src/considerations.js`: the short intro text for each design screen.
-- `src/icons.js`: the one icon set (lucide paths) and the flat logo mark.
-- `src/coupling.js`: which choices feed which budgets (chips, ripple, and the coupling map).
-- `src/craft.js`: the spacecraft drawing, built from the design.
-- `src/scene.js`: the launch, cruise and operations animation.
-- `src/charts.js`: budget graphs over mission time (data from `model.js`, rendered as SVG).
-- `src/main.js`, `src/style.css`: the screens.
+- `src/data.js`: every tunable number (destinations, contracts and their amendments, part formulas, presets, launchers, events).
+- `src/model.js`: physics, launch simulation, anomaly chains, the design space and par cost. No DOM; shared with the balance script.
+- `src/syseng.js`: requirements and interface requirements (who asks what of whom).
+- `src/main.js`, `src/style.css`, `src/charts.js`, `src/craft.js`, `src/scene.js`, `src/coupling.js`: the screens.
 - `scripts/balance.mjs`: the balance test.

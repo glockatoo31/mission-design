@@ -311,3 +311,18 @@ input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offs
 .a-row.over .a-bar u { background: var(--red); } .a-row.over small { color: var(--red); }
 .a-req { margin: 4px 0; }
 .kv.total b.red-t { color: var(--red); }
+/* interface rows and change notices */
+.irow { margin: 6px 0; padding-left: 8px; border-left: 3px solid var(--line-strong); }
+.irow.green { border-left-color: var(--green); } .irow.yellow { border-left-color: var(--amber); } .irow.red { border-left-color: var(--red); }
+.irow small { display: block; color: var(--muted); font-size: .8125rem; }
+.notice { margin: 8px 0; background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 8px; padding: 8px 12px; font-size: .875rem; }
+.notice b { display: block; }
+/* build board, gauges, stars */
+.hud { position: sticky; top: var(--head); z-index: 15; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; background: var(--bg); border-bottom: 1px solid var(--line); font-size: .8125rem; color: var(--text2); }
+.gauges { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.g { display: inline-flex; gap: 6px; align-items: center; background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: 8px; padding: 2px 10px; line-height: 24px; font-size: .8125rem; color: var(--text2); }
+.g b { color: var(--text); font-weight: 500; } .g i { font-style: normal; font-family: var(--mono); }
+.g.green { border-left-color: var(--green); } .g.yellow { border-left-color: var(--amber); } .g.red { border-left-color: var(--red); }
+.card { margin: 10px 0 14px; } .card h3 { font-size: .875rem; color: var(--muted); margin: 0 0 6px; font-weight: 500; }
+.who { margin: 8px 0 4px; } .who summary { cursor: pointer; color: var(--text2); font-size: .875rem; }
+.stars, .o-stars { color: var(--amber); letter-spacing: 2px; } .o-stars { font-size: 1.75rem; margin-bottom: 4px; }

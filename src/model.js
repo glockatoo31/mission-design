@@ -3,7 +3,7 @@
 import {
   G0, STRUCTURE_FRACTION, MASS_GROWTH_MAX, BUS, RTG_HEATER_CREDIT_W, RTG_HOT_FLUX,
   MARGIN_GREEN, MIN_OPS_YEARS, FLYBYS, DESTINATIONS, CONTRACTS, PAYLOADS, ENGINES,
-  LAUNCHERS, TRAJECTORIES, RANDOM_EVENTS, PARAMS, SOLAR, RTG, BATTERY, THERMAL, COMMS, TANK,
+  LAUNCHERS, TRAJECTORIES, RANDOM_EVENTS, PARAMS, PRESETS, SOLAR, RTG, BATTERY, THERMAL, COMMS, TANK,
 } from './data.js';
 
 const byId = (list, id) => list.find((x) => x.id === id) || null;
@@ -61,7 +61,9 @@ function tankPart(d) {
 }
 
 export function parts(d) {
-  const C = byId(CONTRACTS, d.contract);
+  // From round 2 the contract is amended (d.changed): its patch overrides deadline, funding or goal.
+  const C0 = byId(CONTRACTS, d.contract);
+  const C = C0 && d.changed && C0.change ? { ...C0, ...C0.change.patch } : C0;
   const D = C ? byId(DESTINATIONS, C.dest) : null;
   return {
     C, D,
@@ -640,37 +642,31 @@ export function teamCode(d, seed, attempt) {
   return `${D.code}-${code}`;
 }
 
-// ---------- design space for the balance test and the debug helper ----------
-// A coarse grid over every slider and choice (the sliders are continuous in the app).
-export const GRID = {
-  solarArea: [0, 3, 6, 12, 24, 40],
-  rtgUnits: [0, 1, 2],
-  batteryMoon: [3, 8, 16, 28],
-  radiator: [0, 4, 8],
-  shield: [0, 4, 10],
-  dish: [0.3, 1.2, 3],
-  txPower: [10, 40],
-  fuel: [100, 300, 600, 1100, 1500],
-};
-
-export function* designGrid(contractId) {
-  const C = byId(CONTRACTS, contractId); const D = byId(DESTINATIONS, C.dest);
-  const batts = D.nightHours ? GRID.batteryMoon : [PARAMS.battery.def];
-  for (const solarArea of GRID.solarArea) for (const rtgUnits of GRID.rtgUnits) {
-    if (solarArea === 0 && rtgUnits === 0) continue;
-    for (const battery of batts) for (const radiator of GRID.radiator) for (const shield of GRID.shield)
-      for (const dish of GRID.dish) for (const txPower of GRID.txPower) for (const fuel of GRID.fuel)
-        for (const engine of ENGINES) for (const traj of TRAJECTORIES) for (const launcher of LAUNCHERS) {
-          yield { contract: contractId, solarArea, rtgUnits, battery, radiator, shield, dish, txPower, fuel, engine: engine.id, traj: traj.id, launcher: launcher.id };
-        }
-  }
+// ---------- design space for the balance test, the par cost and the debug helper ----------
+// Every combination of the chunky choices a team can make. `changed` plays the amended contract.
+export function* designGrid(contractId, changed = false) {
+  for (const c of PRESETS.comms) for (const t of PRESETS.thermal) for (const p of PRESETS.power) for (const k of PRESETS.tank)
+    for (const engine of ENGINES) for (const traj of TRAJECTORIES) for (const launcher of LAUNCHERS) {
+      yield {
+        contract: contractId, changed, ...c.set, ...t.set, ...p.set, ...k.set,
+        comms: c.id, thermal: t.id, power: p.id, tank: k.id, engine: engine.id, traj: traj.id, launcher: launcher.id,
+      };
+    }
 }
 
-export function cheapestFull(contractId, opts = NOMINAL) {
+export function cheapestFull(contractId, opts = NOMINAL, changed = false) {
   let best = null;
-  for (const d of designGrid(contractId)) {
+  for (const d of designGrid(contractId, changed)) {
     const r = simulate(d, opts);
     if (r.outcome === 'full' && (!best || r.cost < best.cost)) best = { d, cost: r.cost, r };
   }
   return best;
+}
+
+// Par cost: the cheapest full success there is. Cached because the app asks on every result.
+const PAR = new Map();
+export function par(contractId, changed = false) {
+  const k = `${contractId}${changed ? '*' : ''}`;
+  if (!PAR.has(k)) { const b = cheapestFull(contractId, NOMINAL, changed); PAR.set(k, b ? Math.round(b.cost) : null); }
+  return PAR.get(k);
 }

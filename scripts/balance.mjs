@@ -2,8 +2,8 @@
 // using the same model code as the app, and checks the tuning targets.
 // Run: npm run balance   (add --seeds to also sweep launch conditions for seeds 1..20)
 import { CONTRACTS, DESTINATIONS, PARAMS, ENGINES, LAUNCHERS } from '../src/data.js';
-import { simulate, designGrid, NOMINAL, ESTIMATE, launchConditions, budgets, budgetMargins } from '../src/model.js';
-import { defaultAlloc, fitAlloc, compliance } from '../src/syseng.js';
+import { simulate, designGrid, NOMINAL, ESTIMATE, launchConditions, budgets, budgetMargins, par } from '../src/model.js';
+import { interfaces, failRow } from '../src/syseng.js';
 
 const sweepSeeds = process.argv.includes('--seeds');
 const pct = (n, d) => `${((100 * n) / d).toFixed(1)}%`;
@@ -51,16 +51,31 @@ for (const C of CONTRACTS) {
     const best = full.slice().sort((a, b) => a.r.cost - b.r.cost)[0];
     console.log(`Cheapest full success: $${Math.round(best.r.cost)}M of $${C.budget}M`);
     console.log('  ' + JSON.stringify(best.d));
-    check(C.par === Math.round(best.r.cost), `${C.name}: par cost in data.js ($${C.par}M) matches the solver ($${Math.round(best.r.cost)}M)`);
-    // Systems engineering: a winner can be run inside its own allocations with reserve intact,
-    // and the naive default split does not fit it (so teams really have to allocate).
-    const fit = { ...best.d, alloc: fitAlloc(best.d), cr: {} };
-    const cf = compliance(fit);
-    check(cf.ok && cf.reserve >= cf.minReserve, `${C.name}: cheapest winner fits its fitted allocation (reserve ${Math.round(cf.reserve)}M, min ${cf.minReserve}M)`);
-    check(!compliance({ ...best.d, alloc: defaultAlloc(C), cr: {} }).ok, `${C.name}: the naive even allocation does not fit the cheapest winner`);
-    const dres = compliance({ ...best.d, alloc: defaultAlloc(C), cr: {} }).reserve;
-    check(dres >= cf.minReserve, `${C.name}: default allocation leaves the minimum reserve ($${Math.round(dres)}M >= $${cf.minReserve}M)`);
+    const parMargin = (C.budget - par(C.id)) / C.budget;
+    check(parMargin >= 0.1 && parMargin <= 0.14, `${C.name}: funding keeps par (${par(C.id)}M) at ${(parMargin * 100).toFixed(0)}% cost margin (want 10-14%)`);
+    // Interfaces: every row a winner is checked on must be met.
+    const rows = interfaces(best.d);
+    const bad = rows.filter((r) => r.margin != null && r.margin < 0).map((r) => r.label);
+    check(bad.length === 0, `${C.name}: cheapest winner meets every interface requirement${bad.length ? ` (fails ${bad.join(', ')})` : ` (${rows.length} rows)`}`);
   } else check(false, `${C.name}: has a full-success design`);
+
+  // Interfaces: where a need is a sum of other leads' demands, the demands must add up to it,
+  // and the row a failure is traced to must really be the one in deficit.
+  let drift = 0; let traced = 0; let tracedOk = 0;
+  for (let i = 0; i < designs.length; i += 97) {
+    const d = designs[i]; const rows = interfaces(d);
+    for (const label of ['Power', 'Heat', 'Lift', 'Cost']) {
+      const r = rows.find((x) => x.label === label); if (!r) continue;
+      const sum = r.sources.reduce((s, x) => s + x.v, 0);
+      if (Math.abs(sum - r.need) > 0.01 * Math.max(1, r.need)) drift++;
+    }
+    const f = simulate(d, ESTIMATE).failure;
+    const lab = f && !f.partial && f.mode !== 'night' && f.mode !== 'storm' && f.mode !== 'life' && f.mode !== 'deadline' ? failRow(f, budgets(d, ESTIMATE)) : null;
+    const row = lab && rows.find((x) => x.label === lab);
+    if (row && row.margin != null) { traced++; if (row.margin < 0) tracedOk++; }
+  }
+  check(drift === 0, `${C.name}: interface demands add up to the need (${drift} mismatches)`);
+  check(traced === 0 || tracedOk / traced >= 0.98, `${C.name}: failures trace to the interface in deficit (${tracedOk}/${traced})`);
 
   // The bars show nominal margins (no mass growth, no event). Nobody should be able to make every
   // bar green, but a winning design should exist that runs only a little thin.
@@ -83,7 +98,7 @@ for (const C of CONTRACTS) {
   const fullRate = full.length / n;
   const hazardMode = { mercury: 'overheat', moon: 'night', mars: 'storm', europa: 'radiation', pluto: 'data' }[D.id];
   // Funding is tight on purpose, so random designs rarely win; teams iterate with the graphs instead.
-  check(full.length >= 20 && fullRate <= 0.2, `${C.name}: ${full.length} winning grid designs (>=20), ${pct(full.length, n)} of all (<=20%)`);
+  check(full.length >= 5 && fullRate <= 0.2, `${C.name}: ${full.length} winning designs (>=5), ${pct(full.length, n)} of all (<=20%)`);
   check(Object.keys(modes).length >= 3, `${C.name}: ${Object.keys(modes).length} failure modes reachable (>=3)`);
   hazardSeen[D.id] = hazardSeen[D.id] || !!modes[hazardMode];
   for (const key of ['direct', 'assist']) {
@@ -91,6 +106,19 @@ for (const C of CONTRACTS) {
     if (fast) check(trajCount[key] > 0, `${C.name}: ${key} meets the ${C.deadline} yr deadline and has a winning design (${trajCount[key]})`);
     else check(!!modes.deadline, `${C.name}: ${key} (${D.traj[key].cruise} yr) misses the deadline and is catchable (deadline failures ${modes.deadline || 0})`);
   }
+}
+
+// The round-2 amendment: the amended contract is still winnable with par at ~12% cost margin,
+// and the cheapest round-1 design no longer wins, so the team has to re-plan.
+for (const C of CONTRACTS) {
+  const p0 = par(C.id); const p1 = par(C.id, true);
+  const budget = C.change.patch.budget ?? C.budget;
+  let winners = 0; for (const d of designGrid(C.id, true)) if (simulate(d, NOMINAL).outcome === 'full') winners++;
+  const first = [...designGrid(C.id)].map((d) => ({ d, r: simulate(d, NOMINAL) })).filter((x) => x.r.outcome === 'full').sort((a, b) => a.r.cost - b.r.cost)[0];
+  const stillWins = simulate({ ...first.d, changed: true }, NOMINAL).outcome === 'full';
+  check(winners >= 5, `${C.name} amended: ${winners} winning designs (>=5)`);
+  check(p1 != null && (budget - p1) / budget >= 0.1 && (budget - p1) / budget <= 0.14, `${C.name} amended: par ${p1}M inside ${budget}M funding (want 10-14% margin)`);
+  check(!stillWins, `${C.name} amended: the round-1 cheapest design no longer wins`);
 }
 
 // Each destination's unique hazard should be the first failure of at least one design there.

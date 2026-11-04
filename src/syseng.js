@@ -1,83 +1,126 @@
-// Systems-engineering layer: requirements, budget allocation, reserve and change control.
-// Pure functions over the design. Shared by the app and scripts/balance.mjs.
+// Systems-engineering layer: requirements and interfaces. Pure functions over the design;
+// shared by the app and scripts/balance.mjs.
 //
-// Allocated budgets: cost ($M) is split across four owners, and what is left is the system
-// reserve. Power is allocated as loads (heaters, antenna, ion engine); the power system must
-// then be sized to supply bus + payload + every allocated load.
-import { BUS, PAYLOADS } from './data.js';
+// Requirements flow down. The contract gives system requirements (R1-R7). Every design choice
+// then puts derived requirements on other leads (a 90 W transmitter means Power must supply
+// 90 W, and its amplifier means Thermal must reject the heat). Each interface row below is one
+// such capacity check: what is needed, what the receiving lead's design provides, and who
+// contributes to the need.
+import { BUS, PAYLOADS, FLYBYS, RTG_HOT_FLUX, STRUCTURE_FRACTION } from './data.js';
 import { budgets, budgetMargins, marginColor, ESTIMATE, fmtYr } from './model.js';
 
-export const SUBS = [
-  { id: 'pt', label: 'Power & Thermal', lead: 'Power & Thermal Lead' },
-  { id: 'comms', label: 'Comms', lead: 'Comms Lead' },
-  { id: 'prop', label: 'Propulsion & Trajectory', lead: 'Propulsion & Trajectory Lead' },
-  { id: 'launch', label: 'Launch', lead: 'Flight Director' },
-];
-export const POWER_USERS = ['pt', 'comms', 'prop']; // the rocket draws no power
-export const SUB_LABEL = Object.fromEntries(SUBS.map((s) => [s.id, s.label]));
-export const MIN_RESERVE = 0.05; // of the funding cap, held back when allocating
-export const COST_STEP = 5;
-export const POWER_STEP = 10;
+export const LEAD = {
+  pt: 'Power & Thermal Lead', comms: 'Comms Lead', prop: 'Propulsion & Trajectory Lead', launch: 'Flight Director',
+  sci: 'The contract (bus + instrument)', env: 'The destination',
+};
+
+export function fmtU(v, unit) {
+  const n = Math.round(v);
+  if (unit === 'W') return `${n} W`;
+  if (unit === '$M') return `$${n}M`;
+  if (unit === 'kg') return `${n} kg`;
+  if (unit === 'm/s') return `${n} m/s`;
+  if (unit === 'yr') return fmtYr(v);
+  if (unit === 'krad') return `${n} krad`;
+  if (unit === 'Gbit') return v >= 10 ? `${n} Gbit` : `${v.toFixed(1)} Gbit`;
+  return `${v < 1 ? v.toFixed(2) : v.toFixed(1)}x sun`; // 'x sun'
+}
 
 const payloadOf = (C) => PAYLOADS.find((p) => p.id === C.payload);
-export const fixedCost = (C) => BUS.cost + payloadOf(C).cost;
-export const fixedPower = (C) => BUS.powerW + payloadOf(C).powerW;
-export const costPool = (C) => C.budget - fixedCost(C);
+const LIFE_OWNER = { power: 'pt', thermal: 'pt', comms: 'comms', engine: 'prop', payload: 'sci' };
 
-// A naive even split that leaves 10% unallocated. It is deliberately wrong for every contract.
-export function defaultAlloc(C) {
-  const each = Math.floor((0.9 * costPool(C)) / SUBS.length / COST_STEP) * COST_STEP;
-  return {
-    cost: Object.fromEntries(SUBS.map((s) => [s.id, each])),
-    power: Object.fromEntries(POWER_USERS.map((id) => [id, 60])),
-  };
-}
-
-// Allocation plus any approved change request.
-export const eff = (d, kind, id) => ((d.alloc && d.alloc[kind] && d.alloc[kind][id]) || 0) + ((d.cr && d.cr[`${kind}.${id}`]) || 0);
-export const costReserve = (d, C) => C.budget - fixedCost(C) - SUBS.reduce((s, x) => s + eff(d, 'cost', x.id), 0);
-export const powerRequired = (d, C) => fixedPower(C) + POWER_USERS.reduce((s, id) => s + eff(d, 'power', id), 0);
-
-// What each owner's choices actually use.
-export function usage(d) {
-  const b = budgets(d, ESTIMATE); const P = b.P;
-  return {
-    b,
-    cost: {
-      pt: P.power.cost + P.thermal.cost,
-      comms: P.comms.cost,
-      prop: (P.engine ? P.engine.cost : 0) + P.tank.cost + b.opsCost,
-      launch: P.launcher ? P.launcher.cost : 0,
-    },
-    power: { pt: b.heater, comms: P.comms.powerW, prop: P.engine && P.engine.lowThrust ? P.engine.powerW : 0 },
-  };
-}
-
-// Allocation that exactly covers this design (debug helper, and the balance test's proof
-// that every winning design can be run within its allocations).
-export function fitAlloc(d) {
-  const u = usage(d);
-  return {
-    cost: Object.fromEntries(SUBS.map((s) => [s.id, Math.ceil(u.cost[s.id])])),
-    power: Object.fromEntries(POWER_USERS.map((id) => [id, Math.ceil(u.power[id])])),
-  };
-}
-
-// Is every owner inside their allocation, is the reserve intact, and is the power system
-// sized for what was allocated? `over` is the whole-number change request that would fix a row.
-export function compliance(d) {
-  const u = usage(d); const b = u.b; const C = b.C;
+// Interface rows: { label, to, unit, need, have, margin, sources: [{ from, text, v }] }.
+// Rows whose inputs are not chosen yet are left out; sources with no value yet are left out.
+export function interfaces(d) {
+  const b = budgets(d, ESTIMATE); const { P, D, tr, C } = b;
   const rows = [];
-  for (const s of SUBS) rows.push({ kind: 'cost', sub: s.id, key: `cost.${s.id}`, used: u.cost[s.id], alloc: eff(d, 'cost', s.id) });
-  for (const id of POWER_USERS) rows.push({ kind: 'power', sub: id, key: `power.${id}`, used: u.power[id], alloc: eff(d, 'power', id) });
-  for (const r of rows) r.over = Math.max(0, Math.ceil(r.used - r.alloc - 1e-9));
-  const reserve = costReserve(d, C);
-  const required = powerRequired(d, C);
-  const short = Math.max(0, Math.ceil(required - b.supplyEnd));
-  return {
-    rows, reserve, minReserve: Math.ceil(MIN_RESERVE * C.budget), required, supply: b.supplyEnd, short,
-    ok: rows.every((r) => !r.over) && reserve >= 0 && short === 0,
+  const add = (label, to, unit, need, have, margin, sources) => {
+    if (need == null || !Number.isFinite(need)) return;
+    rows.push({ label, to, unit, need, have: Number.isFinite(have) ? have : null, margin: typeof margin === 'number' ? margin : null, sources: sources.filter((s) => s.v != null && Number.isFinite(s.v) && s.v > 1e-9) });
   };
+  const eng = P.engine; const rtgHeat = P.power.rtgUnits * RTG_HOT_FLUX;
+  const bus = BUS.powerW + payloadOf(C).powerW;
+
+  add('Power', 'pt', 'W', b.load, b.supplyEnd, b.powerMargin, [
+    { from: 'sci', text: 'bus + instrument', v: bus },
+    { from: 'comms', text: `transmitter (${P.comms.txW} W radio at 33%)`, v: P.comms.powerW },
+    { from: 'pt', text: 'heaters', v: b.heater },
+  ]);
+  if (eng && eng.lowThrust) {
+    add('Ion burn power', 'pt', 'W', b.ionLoad, b.supplyArrive, b.ionMargin, [
+      { from: 'prop', text: 'ion engine', v: eng.powerW }, { from: 'sci', text: 'bus', v: BUS.powerW }, { from: 'pt', text: 'heaters', v: b.heater },
+    ]);
+  }
+  add('Heat', 'pt', 'x sun', b.hotFlux, b.hotLimit, b.thermalMargin, [
+    { from: 'env', text: 'sunlight', v: D.hotFlux },
+    { from: 'comms', text: 'transmitter amplifier heat', v: P.comms.heatFlux },
+    { from: 'pt', text: 'RTG waste heat', v: rtgHeat },
+  ]);
+  if (tr && tr.flyby === 'venus') {
+    add('Venus flyby', 'pt', 'x sun', b.flybyFlux, b.hotLimit, b.flybyMargin, [
+      { from: 'prop', text: 'Venus flyby route', v: FLYBYS.venus.flux },
+      { from: 'comms', text: 'transmitter amplifier heat', v: P.comms.heatFlux },
+      { from: 'pt', text: 'RTG waste heat', v: rtgHeat },
+    ]);
+  }
+  if (tr) {
+    add('Radiation', 'pt', 'krad', b.dose, b.radTol, b.radMargin, [
+      { from: 'prop', text: `${fmtYr(tr.cruise)} trip${tr.flyby === 'jupiter' ? ' + Jupiter flyby' : ''}`, v: D.cruiseDosePerYr * tr.cruise + (tr.flyby ? FLYBYS[tr.flyby].dose : 0) },
+      { from: 'env', text: `${fmtYr(D.opsYears)} at ${D.name}`, v: D.opsDosePerYr * D.opsYears },
+    ]);
+    if (b.weakest) {
+      add('Part life', LIFE_OWNER[b.weakest.key] || 'pt', 'yr', b.years, b.weakest.part.life, b.lifeMargin, [
+        { from: 'prop', text: 'trip length', v: tr.cruise }, { from: 'env', text: `time at ${D.name}`, v: D.opsYears },
+      ]);
+    }
+  }
+  add('Data', 'comms', 'Gbit', C.goalGb, b.returnable, b.dataMargin, [
+    { from: 'sci', text: `instrument makes ${Math.round(b.genPerYr)} Gbit/yr for ${fmtYr(D.opsYears)}`, v: b.genPerYr * D.opsYears },
+  ]);
+  if (eng && tr) {
+    const others = (BUS.mass + P.payload.mass + P.power.mass + P.thermal.mass + P.comms.mass) * (1 + STRUCTURE_FRACTION);
+    add('Burn', 'prop', 'm/s', b.dvReq, b.dvAvail, b.dvMargin, [
+      { from: 'prop', text: `${tr.label} route${b.dvPenalty > 1 ? ` (x${b.dvPenalty} for low thrust)` : ''}`, v: b.dvReq },
+    ]);
+    rows[rows.length - 1].note = `Dry mass of everyone else (${Math.round(others)} kg) comes out of this budget.`;
+  }
+  if (eng && b.cap != null) {
+    const g = 1 + STRUCTURE_FRACTION;
+    add('Lift', 'launch', 'kg', b.wet, b.cap, b.massMargin, [
+      { from: 'sci', text: 'bus + instrument', v: (BUS.mass + P.payload.mass) * g },
+      { from: 'pt', text: 'power + thermal', v: (P.power.mass + P.thermal.mass) * g },
+      { from: 'comms', text: 'antenna + amplifier', v: P.comms.mass * g },
+      { from: 'prop', text: 'engine + tank + fuel', v: (eng.mass + P.tank.mass) * g + P.tank.prop },
+    ]);
+  }
+  add('Cost', 'launch', '$M', b.cost, b.budget, b.costMargin, [
+    { from: 'sci', text: 'bus + instrument', v: BUS.cost + P.payload.cost },
+    { from: 'pt', text: 'power + thermal', v: P.power.cost + P.thermal.cost },
+    { from: 'comms', text: 'antenna', v: P.comms.cost },
+    { from: 'prop', text: `engine + tank${tr ? ' + operations' : ''}`, v: (eng ? eng.cost : 0) + P.tank.cost + b.opsCost },
+    { from: 'launch', text: 'rocket', v: P.launcher ? P.launcher.cost : 0 },
+  ]);
+  for (const r of rows) r.status = r.margin == null ? 'none' : marginColor(r.margin);
+  return rows;
+}
+
+// Rows a lead must satisfy, and the sources other leads put into other leads' rows.
+export const incoming = (rows, who) => rows.filter((r) => r.to === who);
+export function outgoing(rows, who) {
+  const out = [];
+  for (const r of rows) for (const s of r.sources) if (s.from === who && r.to !== who) out.push({ row: r, src: s });
+  return out;
+}
+
+// Which interface row a launch failure shows up in.
+export function failRow(f, b) {
+  if (!f) return null;
+  if (f.mode === 'insertion') return f.ion ? 'Ion burn power' : 'Burn';
+  if (f.mode === 'flyby') return b.tr.flyby === 'venus' ? 'Venus flyby' : 'Radiation';
+  return {
+    brownout: 'Power', freeze: 'Power', storm: 'Power', night: 'Power', overheat: 'Heat', radiation: 'Radiation',
+    life: 'Part life', data: 'Data', launcher: 'Lift', cost: 'Cost',
+  }[f.mode] || null;
 }
 
 // ---------- requirements ----------

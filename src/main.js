@@ -1,12 +1,14 @@
 import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
 import './style.css';
-import { DESTINATIONS, CONTRACTS, PAYLOADS, PARAMS, STEPS, FLYBYS } from './data.js';
+import { DESTINATIONS, CONTRACTS, PAYLOADS, PARAMS, STEPS } from './data.js';
 import {
   budgets, budgetMargins, marginColor, parts, simulate, explain, launchConditions, teamCode, ESTIMATE, NOMINAL,
-  isComplete, cheapestFull, par, mulberry32, launchCapacity, fmtYr, fmtGb,
+  isComplete, cheapestFull, par, mulberry32, fmtYr, fmtGb,
 } from './model.js';
 import { LEAD, fmtU, interfaces, incoming, outgoing, failRow, requirements, reqFor } from './syseng.js';
+import { trade, decisions, gaveUp, fmtC } from './trades.js';
+import { PAGES, challengeState } from './pages.js';
 import {
   buildCharts, renderChart, resetCharts, attachHover, chartForFailure, CHART_ORDER, CHART_LABEL,
 } from './charts.js';
@@ -21,23 +23,25 @@ const DEBUG = query.has('debug');
 // ?demo: three contracts, three different traps (deadline + battery, dust storm + mass, radiation + power).
 const DEMO_IDS = query.has('demo') ? ['lunar-survey', 'mars-survey', 'europa-spec'] : null;
 const URL_SEED = query.has('seed') ? Math.abs(parseInt(query.get('seed'), 10)) || 1 : null;
-const STORE = 'mission-design-v6';
+const STORE = 'mission-design-v7';
 const MAX_ROUNDS = 3;
 
-// The loop: take a contract, read its requirements, build on one board (four leads, pass the
-// phone), review, launch. Three rounds: a blind flight test, then the contract is amended, then
-// a final attempt. Then a debrief.
-const FLOW = ['contract', 'reqs', 'build', 'review', 'launch', 'debrief'];
+// The loop: take a contract, read its requirements, then one page per subsystem (each with its
+// own mini-challenge, passing the phone between leads), review, launch. Three rounds: a blind
+// flight test, then the contract is amended, then a final attempt. Then a debrief.
+const FLOW = ['contract', 'reqs', ...PAGES.map((p) => p.key), 'review', 'launch', 'debrief'];
 const STEP = Object.fromEntries(STEPS.map((s) => [s.key, s]));
-const STEP_NAME = { contract: 'Contract', reqs: 'Requirements', build: 'Build', review: 'Review', launch: 'Launch', debrief: 'Debrief' };
+const PAGE = Object.fromEntries(PAGES.map((p) => [p.key, p]));
+const STEP_NAME = { contract: 'Contract', reqs: 'Requirements', review: 'Review', launch: 'Launch', debrief: 'Debrief', ...Object.fromEntries(PAGES.map((p) => [p.key, p.title])) };
 // Which lead owns each part.
 const OWNER = { power: 'pt', thermal: 'pt', comms: 'comms', traj: 'prop', engine: 'prop', tank: 'prop', launcher: 'launch' };
 const stepName = (k) => STEP_NAME[k];
-const roleBadge = (k) => (k === 'build' ? 'Pass the phone to each lead' : 'Role: Flight Director');
+const roleBadge = (k) => (PAGE[k] ? `Pass phone → ${LEAD[PAGE[k].who]}` : 'Role: Flight Director');
 
 // The starter design: a flying baseline. Every slot starts at its middle choice.
 function blank() {
-  const d = { contract: null, changed: false, ...Object.fromEntries(Object.entries(PARAMS).map(([k, p]) => [k, p.def])) };
+  // why: the criterion each part was chosen for (the trade-study rationale).
+  const d = { contract: null, changed: false, why: {}, ...Object.fromEntries(Object.entries(PARAMS).map(([k, p]) => [k, p.def])) };
   const start = { traj: 'direct', engine: 'biprop', launcher: 'medium' };
   for (const s of STEPS) {
     const id = start[s.key] || 'm'; const o = s.list.find((x) => x.id === id);
@@ -116,68 +120,28 @@ const partName = (c) => {
   return P[c].short;
 };
 
-// ---------- choices: chunky presets, engines, routes and rockets ----------
+// ---------- choices: a trade table for every part ----------
 const f$ = (v) => `$${R(v)}M`;
-const choiceName = (k) => {
-  const o = STEP[k].list.find((x) => x.id === state.design[k]);
-  if (!o) return '';
-  return k === 'traj' ? (o.id === 'assist' ? `Assist: ${dest().traj.assist.label}` : 'Direct') : o.name;
-};
 
-// A part's own numbers: mass, cost, and what it does at this destination.
-function liveStats(k, d = state.design) {
-  const D = dest(); const P = parts(d); const s = [];
-  const add = (u, v) => s.push(`<span class="stat"><b>${v}</b> ${u}</span>`);
-  const part = P[k];
-  add('kg', R(part.mass)); add('', f$(part.cost));
-  if (k === 'power') {
-    const w = part.solarW * Math.min(1 / D.sunAU ** 2, D.solarCap) + part.rtgW;
-    add(`W at ${D.name}`, w >= 10 ? R(w) : w.toFixed(1));
-    if (D.nightHours) add('kWh battery', n1(part.batteryWh / 1000));
-  } else if (k === 'thermal') {
-    add('x sun max', n1(part.hotLimit)); add('krad shield', R(part.radTol));
-    const heat = D.coldW * part.heaterFactor; if (heat > 0) add('W heater here', R(heat));
-  } else if (k === 'comms') {
-    const down = (part.rateGb * D.contact) / (D.earthAU * D.earthAU);
-    add('W from bus', part.powerW); add('x sun heat', part.heatFlux.toFixed(2)); add(`Gbit/yr from ${D.name}`, down >= 100 ? R(down) : down.toFixed(1));
-  } else if (k === 'tank') add('kg fuel', R(part.prop));
-  return s.join('');
-}
-
-function statsFor(stepKey, p) {
-  if (p.set) return liveStats(stepKey, { ...state.design, ...p.set });
-  const D = dest(); const d = state.design; const s = [];
-  const add = (k, v) => s.push(`<span class="stat"><b>${v}</b> ${k}</span>`);
-  if (p.mass != null) add('kg', p.mass);
-  if (p.cost != null) add('', f$(p.cost));
-  if (stepKey === 'engine') { add('Isp (s)', p.isp); add('thrust', p.thrustN >= 400 ? 'High' : p.thrustN >= 50 ? 'Medium' : 'Tiny'); if (p.powerW) add('W to run', p.powerW); }
-  if (stepKey === 'launcher') add(`kg to ${D.name}`, R(launchCapacity(p, D.traj[d.traj || 'direct'].c3)));
-  if (stepKey === 'traj') {
-    const tr = D.traj[p.id];
-    add('yr trip', fmtYr(tr.cruise, true)); add('m/s burn', tr.dv);
-    add('launch energy', tr.c3 > 30 ? 'High' : tr.c3 > 10 ? 'Med' : 'Low');
-    add('ops cost', f$(D.opsCostPerYr * (tr.cruise + D.opsYears)));
-    if (tr.flyby) add('', FLYBYS[tr.flyby].name);
-  }
-  if (p.life != null) add('yr life', p.life);
-  return s.join('');
-}
-
+// Each option shows its value on the criteria that pull against each other (the best option per
+// criterion is marked). Tapping a number picks the option and records that as the reason.
 function optionsHTML(step) {
-  const D = dest(); const cur = state.design[step.key];
-  const list = step.key === 'traj' ? step.list.map((t) => ({ ...t, name: t.id === 'assist' ? `Assist: ${D.traj.assist.label}` : 'Direct' })) : step.list;
-  return `<div class="opts">${list.map((p) => `
-      <button class="opt ${cur === p.id ? 'sel' : ''}" data-act="pick" data-slot="${step.key}" data-id="${p.id}">
-        <div class="opt-name">${esc(p.name)}</div><div class="opt-blurb">${esc(p.blurb)}</div>
-        <div class="stats">${statsFor(step.key, p)}</div>
-      </button>`).join('')}</div>`;
+  const t = trade(step.key, state.design); const cur = state.design[step.key]; const why = state.design.why[step.key];
+  return `<div class="opts">${t.options.map((o) => `
+    <div class="opt ${cur === o.id ? 'sel' : ''}">
+      <button class="opt-main" data-act="pick" data-slot="${step.key}" data-id="${o.id}"><span class="opt-name">${esc(o.name)}</span><span class="opt-blurb">${esc(o.blurb)}</span></button>
+      <div class="crits">${t.criteria.map((c) => `<button class="crit ${t.isBest(o, c) ? 'best' : ''} ${cur === o.id && why === c.id ? 'why' : ''}" data-act="pick" data-slot="${step.key}" data-id="${o.id}" data-why="${c.id}"><span>${c.label}</span><b>${fmtC(c, o.vals[c.id])}</b></button>`).join('')}</div>
+    </div>`).join('')}</div>`;
 }
 
-// Picking a preset sets the sizes the physics uses; picking an engine, route or rocket sets its id.
-function setChoice(k, id) {
+// Picking sets the sizes the physics uses (presets) or the id (engine, route, rocket). A new
+// option starts with no recorded reason unless one is given; keeping the same option keeps its reason.
+function setChoice(k, id, whyId) {
   const opt = STEP[k].list.find((x) => x.id === id);
+  const same = state.design[k] === id;
   state.design[k] = id;
   if (opt && opt.set) Object.assign(state.design, opt.set);
+  state.design.why = { ...state.design.why, [k]: whyId || (same ? state.design.why[k] : null) || null };
 }
 
 // ---------- screens ----------
@@ -202,7 +166,7 @@ function nav(canGo, nextLabel = 'Next') {
 }
 
 function debugBar() {
-  if (!DEBUG || key() !== 'build') return '';
+  if (!DEBUG || !PAGE[key()]) return '';
   return `<div class="debugbar"><button class="btn small" data-act="dbg-random">Random design</button><button class="btn small" data-act="dbg-good">Cheapest full success</button><span>seed ${state.seed}</span></div>`;
 }
 
@@ -255,10 +219,9 @@ function ifacePanel(k) {
     ${out.length ? `<h2>Your choices put on others</h2>${Object.entries(byLead).map(([to, xs]) => `<div class="irow"><div class="kv"><span>${LEAD[to]}</span></div><small>${xs.join(' · ')}</small></div>`).join('')}` : ''}`;
 }
 
-// ---------- the build board ----------
-// One board, four leads. The spacecraft starts as a flying baseline and each lead tweaks their
-// own part. Silos: a lead sees their own gauges; cost and lift are shared, the rest waits for Review.
-const SECTIONS = [['comms', ['comms']], ['prop', ['traj', 'engine', 'tank']], ['pt', ['thermal', 'power']], ['launch', ['launcher']]];
+// ---------- one page per subsystem ----------
+// Each page is one lead's subsystem with its own mini-challenge. Silos: a lead sees their own
+// gauges and charts; cost and lift are shared; the rest waits for Review.
 
 // The contract amendment that lands from round 2.
 function amendment() {
@@ -272,19 +235,19 @@ function amendment() {
 }
 const amendHTML = () => { const t = amendment(); return t ? `<div class="notice"><b>Contract amendment</b>${esc(t)}. Your round-1 design may no longer fit.</div>` : ''; };
 
-function gaugesHTML(who) {
-  const rows = incoming(interfaces(state.design), who); if (!rows.length) return '';
+// The page's own gauges: the interface rows that land on this lead and belong to this page.
+function gaugesHTML(who, labels) {
+  const rows = incoming(interfaces(state.design), who).filter((r) => labels.includes(r.label)); if (!rows.length) return '';
   const live = showBudgets();
   return `<div class="gauges">${rows.map((r) => (live && r.margin != null
     ? `<span class="g ${r.status}">${r.label} <b>${fPct(r.margin)}</b></span>`
     : `<span class="g">${r.label} <b>needs ${fmtU(r.need, r.unit)}</b></span>`)).join('')}</div>`;
 }
 
-function sectionHTML([who, keys]) {
-  return `<section class="slot"><div class="slot-head"><h2>Pass phone → ${LEAD[who]}</h2></div>${gaugesHTML(who)}
-    ${keys.map((k) => `<div class="card"><h3>${STEP[k].label}</h3>${optionsHTML(STEP[k])}</div>`).join('')}
-    <details class="who"><summary>Who needs what</summary><section class="alloc">${ifacePanel(keys[0])}</section></details></section>`;
-}
+const reasonLabel = (k) => {
+  const c = trade(k, state.design).criteria.find((x) => x.id === state.design.why[k]);
+  return c ? `<small class="whylbl ok">for ${c.label}</small>` : '<small class="whylbl">tap the number you are optimising for</small>';
+};
 
 function hudHTML() {
   if (!showBudgets()) return '<div class="hud"><span>Round 1 flies blind. Pick, then launch.</span></div>';
@@ -293,26 +256,60 @@ function hudHTML() {
   return `<div class="hud">${g('Cost', `${f$(b.cost)} of ${f$(b.budget)}`, M.cost)}${g('Lift', b.cap == null ? '–' : `${R(b.wet)} of ${R(b.cap)} kg`, M.mass)}</div>`;
 }
 
-function screenBuild() {
-  return `${header()}${hudHTML()}<main>${debugBar()}<h1>Build the spacecraft</h1>
-    <p class="lead">${showBudgets() ? 'Each lead tunes their part against their own gauges. Cost and lift are shared; the rest waits for Review.' : 'Pick a size for each part and pass the phone. This is a flight test: the numbers stay hidden until after the launch.'}</p>
-    ${amendHTML()}<div class="craft-wrap" id="craft">${craftSVG(state.design)}</div>
+// The mini-challenge card: what to do, and (from round 2) whether it is met and lean.
+function challengeHTML(page, cs) {
+  const m = page.minimize; const val = (v) => fmtU(v, m.unit);
+  const goal = `Meet it with the least ${m.label}.`;
+  if (!showBudgets()) return `<div class="challenge"><b>Mini-challenge: ${page.name}.</b> ${goal} You will see how you did after the flight.</div>`;
+  const names = (c) => page.steps.map((k, i) => trade(k, state.design).options.find((o) => o.id === c.ids[i]).name).join(' + ');
+  if (cs.met && cs.lean) return `<div class="challenge ok"><b>✓ ${page.name}: met, and lean.</b> Nothing with less ${m.label} would do it (${val(cs.cur.value)}).</div>`;
+  if (cs.met) return `<div class="challenge warn"><b>✓ ${page.name}: met, but over-built.</b> ${esc(names(cs.best))} also does it with ${val(cs.cur.value - cs.best.value)} less ${m.label}.</div>`;
+  if (cs.anyMet) return `<div class="challenge bad"><b>✗ ${page.name}: not met yet.</b> An option here would meet it with the rest of the spacecraft as it is.</div>`;
+  return `<div class="challenge bad"><b>✗ ${page.name}: not met, and nothing on this page can fix it.</b> Something another lead chose is in the way. Open "Who needs what".</div>`;
+}
+
+// Every part is a trade study: the numbers pull against each other, and the lead records which
+// one they chose it for. The page's Next stays locked until each of its parts has a reason.
+function screenPage(page) {
+  const d = state.design; const D = dest(); const b = budgets(d, ESTIMATE); const C = b.C;
+  const idx = PAGES.indexOf(page); const left = page.steps.filter((k) => !d.why[k]).length;
+  const ch = showBudgets() ? buildCharts(d, ESTIMATE) : null;
+  const ctx = { D, C, b };
+  return `${header()}${hudHTML()}<main>${debugBar()}
+    <div class="eyebrow"><span class="role">Subsystem ${idx + 1} of ${PAGES.length} · ${LEAD[page.who]}</span></div>
+    <h1>${page.title}: ${page.name}</h1>
+    <p class="lead">${esc(page.brief(ctx))}</p>
+    ${challengeHTML(page, challengeState(page, d))}
+    <p class="note">${esc(page.physics(ctx))}</p>
+    <div class="craft-wrap" id="craft">${craftSVG(d, { screen: page.craft })}</div>
+    ${gaugesHTML(page.who, page.rows)}
     <div id="rip">${rippleHTML()}</div>
-    ${SECTIONS.map(sectionHTML).join('')}
-  </main>${nav(true, 'Review')}`;
+    ${page.steps.map((k) => `<div class="card"><h3>${STEP[k].label} ${reasonLabel(k)}</h3>${optionsHTML(STEP[k])}</div>`).join('')}
+    <p class="note">Every part is a trade. Tap the number you are optimising for to choose it and record why (green is the best of the options).${left ? ` ${left} still need${left === 1 ? 's' : ''} a reason.` : ''}</p>
+    ${ch ? `<section class="graphs"><div class="chart-grid">${page.charts.filter((k) => ch[k]).map((k) => renderChart(ch[k])).join('')}</div></section>` : ''}
+    <details class="who"><summary>Who needs what</summary><section class="alloc">${ifacePanel(page.steps[0])}</section></details>
+  </main>${nav(left === 0, idx === PAGES.length - 1 ? 'Review' : 'Next')}`;
+}
+
+// The decision record: what each lead chose, why, whether it was the best on that reason, and
+// what it gave up.
+function decisionHTML() {
+  return decisions(state.design).map((x) => {
+    const gave = gaveUp(x).slice(0, 2).map((g) => `${g.crit.label} ${fmtC(g.crit, g.value)} (best ${fmtC(g.crit, g.best)}, ${esc(g.bestOption)})`).join(' · ');
+    return `<div class="vrow ${x.whyBest === false ? 'yellow' : 'green'}"><div><div>${x.label}: ${esc(x.option.name)} <span class="rmeta">${x.why ? `for ${x.why.label}` : 'no reason recorded'}</span></div>
+      <small>${x.whyBest === false ? `Not the best on ${x.why.label}: ${esc(x.gaps.find((g) => g.crit.id === x.why.id).bestOption)} is. ` : ''}${gave ? `Gave up: ${gave}` : x.whyBest === false ? 'Best on the other criteria.' : 'Best on every criterion.'}</small></div></div>`;
+  }).join('');
 }
 
 function screenReview() {
   const d = state.design;
   if (!isComplete(d)) return `${header()}<main><h1>Design review</h1><p>Some parts are missing.</p></main>${nav(false)}`;
   const b = budgets(d, ESTIMATE); const C = b.C; const P = b.P;
-  const rows = [
-    ['Contract', C.name], ...STEPS.map((s) => [s.label, choiceName(s.key)]),
-  ].map(([a, v]) => `<div class="kv"><span>${a}</span><b>${esc(v)}</b></div>`).join('');
+  const rows = decisionHTML();
   if (!showBudgets()) {
-    return `${header()}<main><h1>Final design</h1><p class="lead">${esc(C.name)}. Launch it and see what happens.</p>
+    return `${header()}<main><h1>Final design</h1><p class="lead">${esc(C.name)}. Here is every trade you made. Launch it and see what happens.</p>
       <div class="craft-wrap">${craftSVG(d)}</div>
-      <div class="costbox">${rows}</div>
+      <h2>Decision record</h2><div class="verify">${rows}</div>
     </main>${nav(true, 'Launch')}`;
   }
   const ch = buildCharts(d, ESTIMATE);
@@ -320,6 +317,10 @@ function screenReview() {
   const reqs = requirements(d); const ifs = interfaces(d).filter((r) => r.margin != null);
   const reds = reqs.filter((r) => r.status === 'red').length; const yellows = reqs.filter((r) => r.status === 'yellow').length;
   const over = b.cost > b.budget;
+  const challengeRows = PAGES.map((p) => {
+    const cs = challengeState(p, d);
+    return `<div class="vrow ${cs.met ? (cs.lean ? 'green' : 'yellow') : 'red'}"><div><div>${p.title}: ${p.name}</div><small>${cs.met ? (cs.lean ? 'Met, and lean' : 'Met, but over-built') : 'Not met'} · ${LEAD[p.who]}</small></div></div>`;
+  }).join('');
   const ifRow = (r) => `<div class="vrow ${r.status}"><div><div>${r.label} <span class="rmeta">→ ${LEAD[r.to]}</span></div><small>${fmtU(r.need, r.unit)} needed of ${fmtU(r.have, r.unit)} provided</small>${sourcesHTML(r)}</div><span class="r-m">${fPct(r.margin)}</span></div>`;
   return `${header()}<main><h1>Design review</h1>
     <div class="craft-wrap">${craftSVG(d)}</div>
@@ -331,7 +332,12 @@ function screenReview() {
     <p class="note">What each lead asked of the others, and whether it was met.</p>
     <div class="verify">${ifs.map(ifRow).join('')}</div>
     <details class="picks"><summary>All budget graphs</summary><div class="chart-grid">${keys.map((k) => renderChart(ch[k])).join('')}</div></details>
-    <details class="picks"><summary>Your design</summary><div class="costbox">${rows}</div></details>
+    <h2>Subsystem challenges</h2>
+    <p class="note">Each page's mini-challenge: meet the requirement with the least of its own cost.</p>
+    <div class="verify">${challengeRows}</div>
+    <h2>Decision record</h2>
+    <p class="note">Each trade you made and what it gave up. Yellow means another option was better on your stated reason.</p>
+    <div class="verify">${rows}</div>
     ${over ? `<div class="warn">Launch blocked: over budget by $${R(b.cost - b.budget)}M.</div>` : ''}
   </main>${nav(!over, 'Launch')}`;
 }
@@ -452,13 +458,13 @@ function showResult(res) {
   const f = res.failure;
   // Stars: one for arriving and operating, two for the science goal, three for doing it within 10% of par.
   const parCost = par(d.contract, d.changed);
-  // Over budget fails R3: a round-1 bailout buys the flight, not the stars.
+  // Over budget fails R4: a round-1 bailout buys the flight, not the stars.
   const over = res.cost > res.b.budget;
   let stars = res.outcome === 'full' ? (res.cost <= parCost * 1.1 ? 3 : 2) : res.outcome === 'min' ? 1 : 0;
   if (over) stars = Math.min(stars, 1);
   const rq = f ? requirements(d).find((r) => r.id === reqFor(f)) : null;
   if (!state.history.find((h) => h.attempt === state.attempt)) {
-    state.history.push({ attempt: state.attempt, name: C.name, outcome: res.outcome, stars, score: res.score, code, cost: R(res.cost), req: rq ? `${rq.id} (${rq.text})` : over ? 'R3 (stay under budget)' : null });
+    state.history.push({ attempt: state.attempt, name: C.name, outcome: res.outcome, stars, score: res.score, code, cost: R(res.cost), req: rq ? `${rq.id} (${rq.text})` : over ? 'R4 (afford it)' : null });
     save();
   }
   const chains = explain(d, res);
@@ -476,6 +482,9 @@ function showResult(res) {
   const top = fr ? [...fr.sources].sort((a, c) => c.v - a.v).slice(0, 2) : [];
   const reqLine = !rq ? '' : `<p class="a-req"><b>${rq.id} not met:</b> ${esc(rq.text)}. Owner: ${rq.owner}.</p>
       ${fr && top.length ? `<p class="note"><b>${fr.label}</b> was asked of the ${LEAD[fr.to]}. Biggest demands: ${top.map((s) => `${LEAD[s.from]} (${esc(s.text)}, ${fmtU(s.v, fr.unit)})`).join('; ')}.${fr.have != null ? ` Their design provided ${fmtU(fr.have, fr.unit)}.` : ''}</p>` : ''}`;
+  // The trade behind the failure: the decision that gave up the criterion this interface row measures.
+  const traded = fr ? decisions(d).flatMap((x) => gaveUp(x).filter((g) => g.crit.row === fr.label).map((g) => ({ x, g }))).sort((a, c) => c.g.gap - a.g.gap)[0] : null;
+  const tradeLine = traded ? `<p class="note"><b>The trade behind it:</b> the ${LEAD[OWNER[traded.x.key]]} chose ${esc(traded.x.option.name)}${traded.x.why ? ` for ${traded.x.why.label}` : ''}, which gave up ${traded.g.crit.label} (${fmtC(traded.g.crit, traded.g.value)} against ${fmtC(traded.g.crit, traded.g.best)} for ${esc(traded.g.bestOption)}).</p>` : '';
   document.getElementById('result').innerHTML = `
     <div class="outcome ${res.outcome}">
       <div class="o-stars" role="img" aria-label="${stars} of 3 stars">${starsOf(stars)}</div>
@@ -490,13 +499,13 @@ function showResult(res) {
       <div class="o-note">Your Cost: ${f$(res.cost)} | Target Par Cost: ${f$(parCost)}${stars === 2 ? '. Three stars needs a full success within 10% of par.' : over ? '. Over budget: one star at most.' : ''}</div>
     </div>
     ${f ? `<section class="anomaly"><h2>Anomaly report</h2><p class="a-what">${esc(f.text)}</p>
-      ${reqLine}${warnLater}
+      ${reqLine}${tradeLine}${warnLater}
       ${failChart}
       ${map}
       <p class="a-sub">The chain of cause and effect:</p>
       ${chains.slice(0, 1).map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('')}
       ${chains.length > 1 ? `<details class="picks"><summary>More causes</summary>${chains.slice(1).map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('')}</details>` : ''}
-      </section>` : over ? `<section class="anomaly"><h2>Requirement check</h2><p class="a-req"><b>R3 not met:</b> Stay under ${f$(res.b.budget)}. Owner: Flight Director.</p><p class="note">The flight worked, but the design cost ${f$(res.cost - res.b.budget)} too much. The bailout bought this flight only. Cost is a requirement like any other.</p></section>`
+      </section>` : over ? `<section class="anomaly"><h2>Requirement check</h2><p class="a-req"><b>R4 not met:</b> Afford it: stay under ${f$(res.b.budget)}. Owner: Flight Director.</p><p class="note">The flight worked, but the design cost ${f$(res.cost - res.b.budget)} too much. The bailout bought this flight only. Cost is a requirement like any other.</p></section>`
       : `<section class="anomaly good"><h2>Mission report</h2><p>Every constraint held. ${closest ? `Closest call: <b>${closest}</b>.` : ''}</p></section>`}
     ${ev ? `<p class="note">Random event: ${esc(ev.text)}</p>` : ''}
     ${first ? '<div class="unlock"><b>Gauges unlocked.</b> Back works now. Next, the customer changes the contract.</div>' : ''}
@@ -532,6 +541,9 @@ function screenDebrief() {
   const lessons = [];
   if (first && first.stars < 2) lessons.push(['A flight test finds what paper cannot.', `Round 1 ${first.outcome === 'none' ? 'failed' : 'fell short'}${first.req ? ` on ${first.req}` : ''}. Every failure traced back to a choice someone made for good reasons.`]);
   lessons.push(['Requirements flow down.', 'A choice by one lead became a requirement on another: the transmitter loaded Power, the fuel loaded the rocket, the route set the radiation dose.']);
+  const dec = decisions(state.design); const hit = dec.filter((x) => x.whyBest).length;
+  const big = dec.flatMap((x) => gaveUp(x).map((g) => ({ x, g }))).sort((a, c) => c.g.gap - a.g.gap)[0];
+  lessons.push(['Every choice is a trade.', `${hit} of ${dec.length} choices were the best option on their stated reason.${big ? ` Biggest give-up: ${big.x.option.name} (${big.x.label}) gave up ${big.g.crit.label}, ${fmtC(big.g.crit, big.g.value)} against ${fmtC(big.g.crit, big.g.best)}.` : ''} Writing the reason down is how a team revisits it when requirements change.`]);
   lessons.push(['Requirements change.', `In round 2 the contract was amended (${amendment() || 'new goal and funding'}). A design is only as good as its latest requirements.`]);
   lessons.push(['Margin is a choice.', `Your final design's closest call: ${closestCall(budgets(state.design, ESTIMATE)) || 'n/a'}. Launch adds mass growth and one surprise, so thin margin is a bet.`]);
   return `${header()}<main><h1>Mission debrief</h1>
@@ -552,7 +564,7 @@ function screenDebrief() {
 }
 
 // ---------- render + events ----------
-const SCREENS = { contract: screenContract, reqs: screenReqs, build: screenBuild, review: screenReview, launch: screenLaunch, debrief: screenDebrief };
+const SCREENS = { contract: screenContract, reqs: screenReqs, ...Object.fromEntries(PAGES.map((p) => [p.key, () => screenPage(p)])), review: screenReview, launch: screenLaunch, debrief: screenDebrief };
 
 function render() {
   if (anim) { clearTimeout(anim); anim = null; }
@@ -564,14 +576,23 @@ function render() {
 
 function go(n) { state.step = n; ripple = null; save(); render(); window.scrollTo(0, 0); }
 
+// Debug helper: record a plausible reason for every part (what the chosen option is best at).
+function autoWhy() {
+  for (const s of STEPS) {
+    const t = trade(s.key, state.design); const o = t.options.find((x) => x.id === state.design[s.key]);
+    state.design.why[s.key] = (t.criteria.find((c) => t.isBest(o, c)) || t.criteria[0]).id;
+  }
+}
+
 function autoPick(mode) {
   if (!state.design.contract) return;
   if (mode === 'good') {
-    const best = cheapestFull(state.design.contract, NOMINAL, state.design.changed); if (best) state.design = { ...best.d };
+    const best = cheapestFull(state.design.contract, NOMINAL, state.design.changed); if (best) state.design = { ...best.d, why: {} };
   } else {
     const rng = mulberry32(Date.now() & 0xffffffff);
     for (const s of STEPS) setChoice(s.key, s.list[Math.floor(rng() * s.list.length)].id);
   }
+  autoWhy();
   save(); render();
 }
 
@@ -583,7 +604,7 @@ $app.addEventListener('click', (e) => {
     state.design.contract = el.dataset.id; save(); render();
   } else if (act === 'pick') {
     const before = showBudgets() ? margins() : null;
-    setChoice(el.dataset.slot, el.dataset.id);
+    setChoice(el.dataset.slot, el.dataset.id, el.dataset.why);
     ripple = computeRipple(before, showBudgets() ? margins() : null);
     if (ripple) ripple.who = OWNER[el.dataset.slot];
     save(); keepScroll();
@@ -592,7 +613,7 @@ $app.addEventListener('click', (e) => {
     el.setAttribute('aria-pressed', String(speed === 2));
   } else if (act === 'next') go(Math.min(FLOW.length - 1, state.step + 1));
   else if (act === 'back') { if (canGoBack()) go(Math.max(0, state.step - 1)); }
-  else if (act === 'redesign') { state.attempt += 1; state.design.changed = true; go(stepOf('reqs')); }
+  else if (act === 'redesign') { state.attempt += 1; state.design.changed = true; state.design.why = {}; go(stepOf('reqs')); } // requirements changed: re-confirm every trade
   else if (act === 'finish') go(stepOf('debrief'));
   else if (act === 'newgame') { state = { ...fresh(), seed: state.seed }; save(); render(); window.scrollTo(0, 0); }
   else if (act === 'reset') {

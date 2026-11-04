@@ -157,39 +157,39 @@ export const CONTRACTS = [
 // The 'm' preset of every slot is the starter design.
 export const PRESETS = {
   comms: [
-    { id: 's', name: 'Small dish', blurb: 'Light and frugal. Slow downlink.', set: { dish: 0.5, txPower: 15 } },
-    { id: 'm', name: 'Medium dish', blurb: 'A balanced link.', set: { dish: 1.2, txPower: 40 } },
-    { id: 'l', name: 'Large dish', blurb: 'Fast downlink. Heavy, hungry, hot.', set: { dish: 2.5, txPower: 70 } },
+    { id: 's', name: 'Patch antenna, 0.5 m', blurb: 'Small and frugal. A trickle of data.', set: { dish: 0.5, txPower: 15 } },
+    { id: 'm', name: 'Medium-gain dish, 1.2 m', blurb: 'A balanced link.', set: { dish: 1.2, txPower: 40 } },
+    { id: 'l', name: 'High-gain dish, 2.5 m', blurb: 'A fat downlink. Heavy, hungry, hot.', set: { dish: 2.5, txPower: 70 } },
   ],
   tank: [
-    { id: 's', name: 'Small tank', blurb: 'Light. Short on speed change.', set: { fuel: 300 } },
-    { id: 'm', name: 'Medium tank', blurb: 'A fair load of fuel.', set: { fuel: 700 } },
-    { id: 'l', name: 'Large tank', blurb: 'Lots of speed change. Lots of mass.', set: { fuel: 1200 } },
+    { id: 's', name: 'Titanium tank, 300 kg', blurb: 'Light. Short on speed change.', set: { fuel: 300 } },
+    { id: 'm', name: 'Titanium tank, 700 kg', blurb: 'A fair load of fuel.', set: { fuel: 700 } },
+    { id: 'l', name: 'Titanium tank, 1,200 kg', blurb: 'Lots of speed change. Lots of mass.', set: { fuel: 1200 } },
   ],
   thermal: [
-    { id: 's', name: 'Light blankets', blurb: 'Light. Little cooling or shielding.', set: { radiator: 1, shield: 1 } },
-    { id: 'm', name: 'Radiator panels', blurb: 'Sheds heat. Leaks it in the cold.', set: { radiator: 8, shield: 2 } },
-    { id: 'l', name: 'Shielded vault', blurb: 'Blocks radiation and insulates. Heavy.', set: { radiator: 2, shield: 7 } },
+    { id: 's', name: 'MLI blankets', blurb: 'Gold-foil insulation. Light, with little cooling or shielding.', set: { radiator: 1, shield: 1 } },
+    { id: 'm', name: 'Louvers + radiator panels', blurb: 'Sheds heat. Leaks it in the cold.', set: { radiator: 8, shield: 2 } },
+    { id: 'l', name: 'Titanium radiation vault', blurb: 'Juno-style box: blocks radiation and insulates. Heavy.', set: { radiator: 2, shield: 7 } },
   ],
   power: [
-    { id: 's', name: 'Small arrays', blurb: 'Light and cheap. Weak far from the Sun.', set: { solarArea: 8, rtgUnits: 0, battery: 6 } },
-    { id: 'm', name: 'Large arrays + battery', blurb: 'Plenty of power near the Sun.', set: { solarArea: 24, rtgUnits: 0, battery: 20 } },
-    { id: 'l', name: 'RTG', blurb: 'Steady anywhere. Heavy, pricey, warm.', set: { solarArea: 0, rtgUnits: 1, battery: 6 } },
-    { id: 'x', name: 'Twin RTG', blurb: 'Lots of steady power. Heavier, pricier, hotter.', set: { solarArea: 0, rtgUnits: 2, battery: 6 } },
+    { id: 's', name: 'Compact GaAs arrays', blurb: 'Gallium-arsenide cells. Light and cheap, weak far from the Sun.', set: { solarArea: 8, rtgUnits: 0, battery: 6 } },
+    { id: 'm', name: 'Wide-wing GaAs arrays + Li-ion battery', blurb: 'Plenty of power near the Sun.', set: { solarArea: 24, rtgUnits: 0, battery: 20 } },
+    { id: 'l', name: 'GPHS-RTG', blurb: 'Plutonium heat source, as flown on New Horizons. Steady anywhere. Heavy, pricey, warm.', set: { solarArea: 0, rtgUnits: 1, battery: 6 } },
+    { id: 'x', name: 'Twin GPHS-RTG', blurb: 'Two of them. Lots of steady power. Heavier, pricier, hotter.', set: { solarArea: 0, rtgUnits: 2, battery: 6 } },
   ],
 };
 
 export const ENGINES = [
-  { id: 'mono', name: 'Monoprop thrusters', blurb: 'Simple and light. Low efficiency.', mass: 12, cost: 8, isp: 225, thrustN: 100, life: 15 },
-  { id: 'biprop', name: 'Biprop main engine', blurb: 'Strong and efficient.', mass: 35, cost: 22, isp: 320, thrustN: 450, life: 12 },
-  { id: 'ion', name: 'Ion engine', blurb: '10x efficiency, tiny thrust. Needs 600 W.', mass: 70, cost: 50, isp: 3000, thrustN: 0.2, lowThrust: true, powerW: 600, life: 6 },
+  { id: 'mono', name: 'Hydrazine thrusters', blurb: 'Simple monopropellant thrusters. Light, low efficiency.', mass: 12, cost: 8, isp: 225, thrustN: 100, life: 15 },
+  { id: 'biprop', name: 'R-4D-class bipropellant engine', blurb: 'Strong and efficient: the workhorse for orbit insertion.', mass: 35, cost: 22, isp: 320, thrustN: 450, life: 12 },
+  { id: 'ion', name: 'Dawn-style ion thruster', blurb: 'Ten times the efficiency, tiny thrust, and it needs 600 W.', mass: 70, cost: 50, isp: 3000, thrustN: 0.2, lowThrust: true, powerW: 600, life: 6 },
 ];
 
 // Capacity to a given launch energy: cap = baseKg * exp(-c3 / falloff)
 export const LAUNCHERS = [
-  { id: 'light', name: 'Light launcher', blurb: 'Cheap. Small payloads.', cost: 60, baseKg: 2400, falloff: 35 },
-  { id: 'medium', name: 'Medium launcher', blurb: 'The workhorse.', cost: 130, baseKg: 5000, falloff: 50 },
-  { id: 'heavy', name: 'Heavy launcher', blurb: 'Huge energy. Huge price.', cost: 250, baseKg: 11000, falloff: 55 },
+  { id: 'light', name: 'Electron-class light launcher', blurb: 'Cheap. Small payloads.', cost: 60, baseKg: 2400, falloff: 35 },
+  { id: 'medium', name: 'Atlas V-class medium launcher', blurb: 'The workhorse.', cost: 130, baseKg: 5000, falloff: 50 },
+  { id: 'heavy', name: 'Falcon Heavy-class heavy launcher', blurb: 'Huge energy. Huge price.', cost: 250, baseKg: 11000, falloff: 55 },
 ];
 
 export const TRAJECTORIES = [

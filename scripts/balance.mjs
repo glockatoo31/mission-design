@@ -1,9 +1,11 @@
 // Balance test: sweeps a coarse grid over every slider and choice for every contract,
 // using the same model code as the app, and checks the tuning targets.
 // Run: npm run balance   (add --seeds to also sweep launch conditions for seeds 1..20)
-import { CONTRACTS, DESTINATIONS, PARAMS, ENGINES, LAUNCHERS } from '../src/data.js';
+import { CONTRACTS, DESTINATIONS, PARAMS, ENGINES, LAUNCHERS, STEPS } from '../src/data.js';
 import { simulate, designGrid, NOMINAL, ESTIMATE, launchConditions, budgets, budgetMargins, par } from '../src/model.js';
 import { interfaces, failRow } from '../src/syseng.js';
+import { trade, decisions } from '../src/trades.js';
+import { PAGES, challengeState } from '../src/pages.js';
 
 const sweepSeeds = process.argv.includes('--seeds');
 const pct = (n, d) => `${((100 * n) / d).toFixed(1)}%`;
@@ -57,7 +59,28 @@ for (const C of CONTRACTS) {
     const rows = interfaces(best.d);
     const bad = rows.filter((r) => r.margin != null && r.margin < 0).map((r) => r.label);
     check(bad.length === 0, `${C.name}: cheapest winner meets every interface requirement${bad.length ? ` (fails ${bad.join(', ')})` : ` (${rows.length} rows)`}`);
+    // Mini-challenges: the cheapest winner meets every subsystem page's challenge.
+    const miss = PAGES.filter((p) => !challengeState(p, best.d).met).map((p) => p.key);
+    check(miss.length === 0, `${C.name}: cheapest winner meets all ${PAGES.length} mini-challenges${miss.length ? ` (misses ${miss.join(', ')})` : ''}`);
   } else check(false, `${C.name}: has a full-success design`);
+
+  // Mini-challenges are real tests: across designs each one lands in at least two different outcomes
+  // (not met, met but over-built, met and lean), so choosing well always matters.
+  const seen = Object.fromEntries(PAGES.map((p) => [p.key, new Set()]));
+  for (let i = 0; i < designs.length; i += 61) for (const p of PAGES) { const s = challengeState(p, designs[i]); seen[p.key].add(s.met ? (s.lean ? 'lean' : 'over') : 'unmet'); }
+  const oneSided = PAGES.filter((p) => seen[p.key].size < 2).map((p) => p.key);
+  check(oneSided.length === 0, `${C.name}: every mini-challenge has at least two possible outcomes${oneSided.length ? ` (one-sided: ${oneSided.join(', ')})` : ''}`);
+
+  // Trade studies: no option may be best on every criterion (or the choice is not a trade), and the
+  // decision record must work for every design a team could reach.
+  const dominant = [];
+  for (const traj of ['direct', 'assist']) for (const s of STEPS) {
+    const t = trade(s.key, { ...designs[0], traj });
+    for (const o of t.options) if (t.criteria.every((c) => t.isBest(o, c))) dominant.push(`${s.key}:${o.id}`);
+  }
+  check(dominant.length === 0, `${C.name}: every choice is a real trade (${dominant.length ? 'dominant ' + dominant.join(', ') : 'no option best on every criterion'})`);
+  let bad = 0; for (let i = 0; i < designs.length; i += 53) { try { decisions({ ...designs[i], why: {} }).forEach((x) => { if (!x.option || !(x.gaps.length >= 0)) bad++; }); } catch { bad++; } }
+  check(bad === 0, `${C.name}: the decision record works for sampled designs (${bad} errors)`);
 
   // Interfaces: where a need is a sum of other leads' demands, the demands must add up to it,
   // and the row a failure is traced to must really be the one in deficit.

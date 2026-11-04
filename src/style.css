@@ -326,3 +326,18 @@ input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offs
 .card { margin: 10px 0 14px; } .card h3 { font-size: .875rem; color: var(--muted); margin: 0 0 6px; font-weight: 500; }
 .who { margin: 8px 0 4px; } .who summary { cursor: pointer; color: var(--text2); font-size: .875rem; }
 .stars, .o-stars { color: var(--amber); letter-spacing: 2px; } .o-stars { font-size: 1.75rem; margin-bottom: 4px; }
+/* trade table */
+.opt { cursor: default; padding: 12px; }
+.opt-main { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 0 4px; color: inherit; cursor: pointer; }
+.opt-main .opt-name, .opt-main .opt-blurb { display: block; }
+.crits { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.crit { display: flex; flex-direction: column; align-items: flex-start; gap: 0; flex: 1 1 90px; min-height: 44px; padding: 4px 10px; background: var(--sunken); border: 1px solid var(--line); border-radius: 8px; color: var(--text2); cursor: pointer; font-size: .75rem; text-align: left; }
+.crit span { color: var(--muted); } .crit b { color: var(--text); font: 500 .875rem var(--mono); font-variant-numeric: tabular-nums; }
+.crit.best { border-color: var(--green); } .crit.best b { color: var(--green); }
+.crit.why { background: var(--accent); border-color: var(--accent); } .crit.why span, .crit.why b { color: #fff; }
+.crit:active { transform: scale(.97); }
+.whylbl { font-weight: 400; color: var(--muted); margin-left: 6px; } .whylbl.ok { color: var(--green); }
+/* mini-challenge card */
+.challenge { margin: 10px 0; padding: 10px 14px; background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: 8px; font-size: .9375rem; }
+.challenge b { font-weight: 500; }
+.challenge.ok { border-left-color: var(--green); } .challenge.warn { border-left-color: var(--amber); } .challenge.bad { border-left-color: var(--red); }

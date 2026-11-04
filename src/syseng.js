@@ -1,7 +1,7 @@
 // Systems-engineering layer: requirements and interfaces. Pure functions over the design;
 // shared by the app and scripts/balance.mjs.
 //
-// Requirements flow down. The contract gives system requirements (R1-R7). Every design choice
+// Requirements flow down. The contract gives four requirements (R1-R4). Every design choice
 // then puts derived requirements on other leads (a 90 W transmitter means Power must supply
 // 90 W, and its amplifier means Thermal must reject the heat). Each interface row below is one
 // such capacity check: what is needed, what the receiving lead's design provides, and who
@@ -74,6 +74,7 @@ export function interfaces(d) {
       ]);
     }
   }
+  if (tr) add('Schedule', 'prop', 'yr', tr.cruise, C.deadline, b.timeMargin, [{ from: 'prop', text: `${tr.label} route`, v: tr.cruise }]);
   add('Data', 'comms', 'Gbit', C.goalGb, b.returnable, b.dataMargin, [
     { from: 'sci', text: `instrument makes ${Math.round(b.genPerYr)} Gbit/yr for ${fmtYr(D.opsYears)}`, v: b.genPerYr * D.opsYears },
   ]);
@@ -119,12 +120,13 @@ export function failRow(f, b) {
   if (f.mode === 'flyby') return b.tr.flyby === 'venus' ? 'Venus flyby' : 'Radiation';
   return {
     brownout: 'Power', freeze: 'Power', storm: 'Power', night: 'Power', overheat: 'Heat', radiation: 'Radiation',
-    life: 'Part life', data: 'Data', launcher: 'Lift', cost: 'Cost',
+    life: 'Part life', data: 'Data', launcher: 'Lift', cost: 'Cost', deadline: 'Schedule',
   }[f.mode] || null;
 }
 
 // ---------- requirements ----------
-// Derived from the contract. Each has an owner, the choices that satisfy it, and a margin.
+// Four plain requirements, derived from the contract. Each has an owner, the choices that
+// satisfy it, and a margin (the thinnest of the budgets behind it).
 const HAZARD_BY = {
   moon: 'Power · Thermal', mars: 'Power · Thermal', mercury: 'Thermal · Antenna', europa: 'Thermal · Route', pluto: 'Antenna · Power',
 };
@@ -133,13 +135,11 @@ export function requirements(d) {
   const b = budgets(d, ESTIMATE); const M = budgetMargins(b); const { C, D } = b;
   const min = (...ms) => { const n = ms.filter((m) => typeof m === 'number'); return n.length ? Math.min(...n) : null; };
   const rows = [
-    { id: 'R1', text: `Return ${C.goalGb} Gbit of science`, margin: M.data, owner: 'Comms Lead', by: 'Antenna · Instrument' },
-    { id: 'R2', text: `Arrive within ${fmtYr(C.deadline)}`, margin: M.time, owner: 'Propulsion & Trajectory Lead', by: 'Route' },
-    { id: 'R3', text: `Stay under $${C.budget}M`, margin: M.cost, owner: 'Flight Director', by: 'Every part · Rocket · Trip length' },
-    { id: 'R4', text: `Survive: ${D.hazard.name}`, margin: b.hazardMargin, owner: D.id === 'pluto' ? 'Comms Lead' : 'Power & Thermal Lead', by: HAZARD_BY[D.id] },
-    { id: 'R5', text: 'Fit the rocket\'s lift limit', margin: M.mass, owner: 'Flight Director', by: 'Rocket · Route · Part mass' },
-    { id: 'R6', text: 'Make the arrival burn', margin: M.dv, owner: 'Propulsion & Trajectory Lead', by: 'Engine · Fuel · Route' },
-    { id: 'R7', text: 'Stay powered, cool and working all mission', margin: min(M.power, M.thermal, M.rad, M.life), owner: 'Power & Thermal Lead', by: 'Power · Thermal · Part life' },
+    { id: 'R1', name: 'Get there', text: `Get there: arrive within ${fmtYr(C.deadline)} and make the arrival burn`, margin: min(M.time, M.dv), owner: 'Propulsion & Trajectory Lead', by: 'Route · Engine · Fuel' },
+    { id: 'R2', name: 'Do the science', text: `Do the science: return ${C.goalGb} Gbit`, margin: M.data, owner: 'Comms Lead', by: 'Antenna · Instrument' },
+    // At Pluto the hazard is the faint signal, which is the science requirement already.
+    { id: 'R3', name: 'Stay alive', text: `Stay alive: ${D.hazard.name}, power, heat and part life`, margin: min(M.power, M.thermal, M.rad, M.life, D.id === 'pluto' ? null : b.hazardMargin), owner: 'Power & Thermal Lead', by: HAZARD_BY[D.id] },
+    { id: 'R4', name: 'Afford it and launch it', text: `Afford it: stay under $${C.budget}M and fit the rocket`, margin: min(M.cost, M.mass), owner: 'Flight Director', by: 'Every part · Rocket' },
   ];
   for (const r of rows) r.status = marginColor(r.margin);
   return rows;
@@ -147,7 +147,8 @@ export function requirements(d) {
 
 // Which requirement a launch failure violated.
 const MODE_REQ = {
-  data: 'R1', deadline: 'R2', cost: 'R3', night: 'R4', storm: 'R4', launcher: 'R5', insertion: 'R6',
-  brownout: 'R7', freeze: 'R7', overheat: 'R7', radiation: 'R7', life: 'R7', flyby: 'R7',
+  deadline: 'R1', insertion: 'R1', data: 'R2',
+  night: 'R3', storm: 'R3', brownout: 'R3', freeze: 'R3', overheat: 'R3', radiation: 'R3', life: 'R3', flyby: 'R3',
+  cost: 'R4', launcher: 'R4',
 };
-export const reqFor = (f) => (f ? (f.hazard ? 'R4' : MODE_REQ[f.mode]) : null);
+export const reqFor = (f) => (f ? MODE_REQ[f.mode] : null);

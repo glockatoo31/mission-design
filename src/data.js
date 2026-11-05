@@ -85,24 +85,11 @@ export const DESTINATIONS = [
     },
   },
   {
-    id: 'moon', name: 'Moon', code: 'MOO', color: '#c9c9c9',
-    dvLabel: 'Easy', thermalLabel: 'Extreme swings', difficulty: 3, mult: 1.3,
-    hazard: { name: 'Lunar night', text: '14 days of dark and -170 C. No sun: batteries and heaters must carry you.' },
-    sunAU: 1.0, solarCap: 1.0, solarDeg: 0.02, earthAU: 0.05, contact: 0.5,
-    hotFlux: 2.2, coldW: 60, dark: { hours: 336, cyclesPerYr: 12.4, ops: 0, label: 'Lunar night' },
-    cruiseDosePerYr: 3, opsDosePerYr: 8,
-    opsYears: 1, opsCostPerYr: 15, lowThrustPenalty: 99,
-    traj: {
-      direct: { label: 'Direct', c3: -2, dv: 1800, cruise: 0.02 },
-      assist: { label: 'Low-energy ballistic transfer', c3: -1, dv: 1500, cruise: 0.3 },
-    },
-  },
-  {
     id: 'mars', name: 'Mars', code: 'MAR', color: '#c1440e',
     dvLabel: 'Easy', thermalLabel: 'Mild', difficulty: 1, mult: 1.0,
     hazard: { name: 'Dust storm', text: 'A global dust storm cuts sunlight by 80% for weeks.' },
     sunAU: 1.52, solarCap: 1.0, solarDeg: 0.02, earthAU: 1.5, contact: 0.33,
-    hotFlux: 0.43, coldW: 45, stormFactor: 0.1, stormYear: 0.6, dark: { hours: 12.3, cyclesPerYr: 355, ops: 0.3, label: 'Martian night' },
+    hotFlux: 0.43, coldW: 45, stormFactor: 0.1, stormYear: 0.6, dark: { hours: 12.3, cyclesPerYr: 355, ops: 0.3, label: 'Eclipse' },
     cruiseDosePerYr: 3, opsDosePerYr: 5,
     opsYears: 2, opsCostPerYr: 18, lowThrustPenalty: 1.6,
     traj: {
@@ -153,14 +140,10 @@ export const PAYLOADS = [
 // cheap to be robust. `change` is the amendment that lands from round 2: it patches the
 // contract and makes the round-1 winner stop winning.
 export const CONTRACTS = [
-  { id: 'lunar-survey', name: 'Lunar Pathfinder', dest: 'moon', payload: 'cam', goalGb: 70, deadline: 0.25, budget: 350, brief: 'Land near the south pole. Fast and cheap.', change: { patch: { payload: 'hires', goalGb: 300, budget: 445 } }  },
-  { id: 'lunar-spec', name: 'South Pole Ice Survey', dest: 'moon', payload: 'cam', goalGb: 75, deadline: 0.5, budget: 344, brief: 'Survive the lunar night and photograph the ice.', change: { patch: { payload: 'hires', goalGb: 900, budget: 445 } } },
-  { id: 'mars-survey', name: 'Mars Survey Lander', dest: 'mars', payload: 'cam', goalGb: 150, deadline: 1.5, budget: 250, brief: 'Ride out the dust storm and send pictures home.', change: { patch: { payload: 'spec', goalGb: 225, budget: 295 } } },
-  { id: 'mars-radar', name: 'Mars Subsurface Radar', dest: 'mars', payload: 'hires', goalGb: 1500, deadline: 3, budget: 370, brief: 'Radar under the surface. Heavy, hungry, huge data.', change: { patch: { goalGb: 2250, budget: 375 } } },
-  { id: 'mercury-survey', name: 'Mercury Surveyor', dest: 'mercury', payload: 'cam', goalGb: 150, deadline: 8, budget: 250, brief: 'Orbit Mercury and map the surface.', change: { patch: { payload: 'spec', goalGb: 450, budget: 305 } } },
+  { id: 'mars-survey', name: 'Mars Survey Orbiter', dest: 'mars', payload: 'cam', goalGb: 150, deadline: 1.5, budget: 250, brief: 'Orbit Mars through the dust storm and send pictures home.', change: { patch: { payload: 'spec', goalGb: 225, budget: 295 } } },
   { id: 'europa-spec', name: 'Europa Flyby Spectrometry', dest: 'europa', payload: 'spec', goalGb: 90, deadline: 7, budget: 570, brief: 'Fly past Europa before the radiation wins.', change: { patch: { payload: 'hires', goalGb: 135, budget: 750 } } },
+  { id: 'mercury-survey', name: 'Mercury Orbiter', dest: 'mercury', payload: 'cam', goalGb: 150, deadline: 8, budget: 250, brief: 'Orbit Mercury and map the surface.', change: { patch: { payload: 'spec', goalGb: 450, budget: 305 } } },
   { id: 'pluto-survey', name: 'Pluto Flyby Imaging', dest: 'pluto', payload: 'cam', goalGb: 1.6, deadline: 10, budget: 585, brief: 'A decade out. Send the pictures home.', change: { patch: { payload: 'spec', goalGb: 4, budget: 630 } } },
-  { id: 'pluto-spec', name: 'Pluto Flyby Spectrometry', dest: 'pluto', payload: 'spec', goalGb: 1.6, deadline: 9, budget: 630, brief: 'The same trip, a hungrier instrument, a tighter deadline.', change: { patch: { payload: 'hires', goalGb: 2.4, budget: 885 } } },
 ];
 
 

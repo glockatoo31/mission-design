@@ -6,13 +6,13 @@ import { art } from './art.js';
 // Sprite sizes (px) x 2 = scene units, so every pixel is a crisp 2x2 square.
 const ROCKET = { light: [18, 64], f9: [22, 74], medium: [26, 84], heavy: [34, 84] };
 const img = (name, x, y, w, h) => `<image href="${art(name)}" x="${x}" y="${y}" width="${w}" height="${h}" class="pix"/>`;
-const LANDS = new Set(['moon', 'mars']); // shortcut: Pluto's flyby is drawn as an orbit, draw a pass-by if it matters
+// shortcut: every mission is an orbiter or flyby, and flybys (Europa, Pluto) are drawn as an orbit; draw a pass-by if it matters
 const E = [34, 150]; const S = [296, 96]; const EARTH_OPS = [30, 30];
 const ease = (t) => 1 - (1 - t) * (1 - t);
 const lerp = (a, b, t) => a + (b - a) * t;
 
 export function createScene(el, { design, b, failure }) {
-  const D = b.D; const land = LANDS.has(D.id); const [rw, rh] = ROCKET[design.launcher];
+  const D = b.D; const [rw, rh] = ROCKET[design.launcher];
   const geo = craftGeom(design); const craft = craftGroup(design);
   const path = design.traj === 'assist' ? 'M34 150Q165 10 296 96' : 'M34 150Q165 118 296 96';
   const craftNode = (id, flame) => `<g id="${id}" class="craft">${craft}${flame ? `<polygon id="${id}-f" class="flame"/>` : ''}</g>`;
@@ -34,8 +34,7 @@ export function createScene(el, { design, b, failure }) {
       ${craftNode('sc-craft1')}
     </g>
     <g id="sc-ops">
-      ${land ? `<rect x="0" y="150" width="340" height="70" style="fill:${D.color}"/><rect x="0" y="150" width="340" height="4" class="shade"/>`
-    : `<ellipse cx="170" cy="120" rx="96" ry="30" class="orbit"/>${img(`planet_${D.id}`, 122, 72, 96, 96)}`}
+      <ellipse cx="170" cy="120" rx="96" ry="30" class="orbit"/>${img(`planet_${D.id}`, 122, 72, 96, 96)}
       ${img('planet_earth', EARTH_OPS[0] - 12, EARTH_OPS[1] - 12, 24, 24)}
       <line id="sc-beam" x1="0" y1="0" x2="0" y2="0" class="beam"/>
       ${craftNode('sc-craft2', true)}
@@ -71,8 +70,7 @@ export function createScene(el, { design, b, failure }) {
       mark = [pt.x, pt.y];
     } else {
       const g2 = $('sc-craft2'); let x; let y;
-      if (land) { x = 170; y = ph === 2 ? lerp(-30, 140, ease(p)) : 140; }
-      else if (ph === 2) { x = lerp(-30, 74, ease(p)); y = lerp(40, 120, ease(p)); } else {
+      if (ph === 2) { x = lerp(-30, 74, ease(p)); y = lerp(40, 120, ease(p)); } else {
         const th = Math.PI + 4 * Math.PI * p; x = 170 + 96 * Math.cos(th); y = 120 + 30 * Math.sin(th);
         g2.style.opacity = Math.sin(th) < 0 && Math.abs(x - 170) < 46 ? 0.25 : 1; // behind the planet
       }

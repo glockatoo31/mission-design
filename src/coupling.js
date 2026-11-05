@@ -4,7 +4,7 @@
 export const CHOICES = ['contract', 'power', 'thermal', 'comms', 'traj', 'engine', 'tank', 'launcher'];
 export const CHOICE_LABEL = { contract: 'Instrument', power: 'Power', thermal: 'Thermal', comms: 'Antenna', traj: 'Route', engine: 'Engine', tank: 'Fuel', launcher: 'Rocket' };
 
-// Budget keys match charts.js. The Moon's night battery counts as Power.
+// Budget keys match charts.js. The battery in the dark (eclipse) counts as Power.
 export const BUDGETS = ['power', 'thermal', 'rad', 'data', 'mass', 'dv', 'cost', 'life', 'time'];
 export const BUDGET_LABEL = { power: 'Power', thermal: 'Heat', rad: 'Radiation', data: 'Data', mass: 'Mass', dv: 'Fuel', cost: 'Cost', life: 'Part life', time: 'Schedule', night: 'Power' };
 

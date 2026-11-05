@@ -1,5 +1,4 @@
-// Balance test: streams every part type at several sizes (192,000 designs per contract, 384,000 for
-// the Moon) through the same model code the app uses, for each contract and its round-2 amendment,
+// Balance test: streams every part type at several sizes (192,000 designs per contract) through the same model code the app uses, for each contract and its round-2 amendment,
 // and checks the tuning targets.
 // Run: npm run balance          (about two minutes)
 //      npm run balance -- --write-par   regenerates src/par.js (the stored cheapest designs), then run it again
@@ -96,7 +95,7 @@ for (const C of CONTRACTS) {
   check(S.allGreen === 0, `${C.name}: no design has every bar green (${S.allGreen} do)`);
   check(S.bestThin >= 0.05 && S.bestThin < 0.15, `${C.name}: best winning design runs ${(S.bestThin * 100).toFixed(1)}% thin (want 5-14%)`);
   check(Object.keys(S.modes).length >= 3, `${C.name}: ${Object.keys(S.modes).length} failure modes reachable (>=3)`);
-  const hazardMode = { mercury: 'overheat', moon: 'night', mars: 'storm', europa: 'radiation', pluto: 'data' }[D.id];
+  const hazardMode = { mercury: 'overheat', mars: 'storm', europa: 'radiation', pluto: 'data' }[D.id];
   check(!!S.modes[hazardMode], `${C.name}: its hazard (${hazardMode}) is the first failure of some design`);
   for (const key of ['direct', 'assist']) {
     const fast = D.traj[key].cruise <= C.deadline;

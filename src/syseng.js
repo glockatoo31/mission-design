@@ -136,7 +136,7 @@ export function failRow(f, b) {
 // Four plain requirements, derived from the contract. Each has an owner, the choices that
 // satisfy it, and a margin (the thinnest of the budgets behind it).
 const HAZARD_BY = {
-  moon: 'Power · Thermal', mars: 'Power · Thermal', mercury: 'Thermal · Antenna', europa: 'Thermal · Route', pluto: 'Antenna · Power',
+  mars: 'Power · Thermal', mercury: 'Thermal · Antenna', europa: 'Thermal · Route', pluto: 'Antenna · Power',
 };
 
 export function requirements(d) {

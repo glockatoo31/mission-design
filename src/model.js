@@ -316,9 +316,7 @@ export function budgets(d, opts = ESTIMATE) {
   // Destination-specific hazard
   r.hazardMargin = null;
   if (D) {
-    if (D.id === 'moon') {
-      r.hazardMargin = r.darkMargin;
-    } else if (D.id === 'mars') {
+    if (D.id === 'mars') {
       const cruise = tr ? tr.cruise : 0;
       const s = supplyParts(cruise + D.stormYear, P, cruise, opts, 0, D.stormFactor);
       r.stormSupply = s.solar + s.rtg;
@@ -441,7 +439,7 @@ export function budgetMargins(b) {
 }
 
 function hazardMode(D) {
-  return { mercury: 'overheat', moon: 'night', mars: 'storm', europa: 'radiation', pluto: 'data' }[D.id];
+  return { mercury: 'overheat', mars: 'storm', europa: 'radiation', pluto: 'data' }[D.id];
 }
 
 function findFirst(a, b, pred) {

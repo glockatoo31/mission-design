@@ -8,7 +8,7 @@ Static, client-only (Vite + vanilla JS). No backend, no accounts, no network cal
 
 Three rounds, about five minutes each.
 
-1. **Contract.** Pick one of eight missions (Moon, Mars, Mercury, Europa, Pluto). Each fixes the
+1. **Contract.** Pick one of four missions, one per destination, all orbiters or flybys (Mars, Europa, Mercury, Pluto). Each fixes the
    instrument, the science goal, the deadline and the funding.
 2. **Requirements.** The contract becomes four plain requirements (R1 get there, R2 do the science,
    R3 stay alive, R4 afford it and launch it), each with an owner and its own gauge.
@@ -85,7 +85,7 @@ npm run balance
 ```
 
 Every part type is tried at several sizes: 192,000 designs per contract (576,000 where there is a dark period to
-survive: the Moon, Mars and Mercury, which also try three battery sizes). The test streams all of them through the same
+survive: Mars and Mercury, which also try three battery sizes). The test streams all of them through the same
 `src/model.js` the app uses, for both the original and the amended contract (a few minutes), and checks that:
 
 - every contract has winning designs and funding keeps the par cost 10-14% inside it; `src/par.js` (the stored cheapest designs) matches the solver
@@ -134,7 +134,7 @@ Make a QR code of the URL (add `?seed=N` so every team gets the same launch cond
 |---|---|
 | `?seed=N` | Fixed randomness. Every phone with the same seed gets the same hidden mass growth and random event for each round. Without it, each phone picks its own seed. |
 | `?debug` | Shows "Random design" / "Cheapest full success" buttons on the subsystem pages and skips all timers. A full three-round game in about a minute. |
-| `?demo` | The contract board shows only Lunar Pathfinder, Mars Survey Lander and Europa Flyby Spectrometry (three different traps). Good for a 20-minute session. |
+| `?demo` | The contract board shows only Mars Survey Orbiter, Europa Flyby Spectrometry and Mercury Orbiter (three different traps). Good for a 20-minute session. |
 
 Combine them: `?seed=7&demo` (add `&debug` to rehearse).
 
@@ -146,13 +146,13 @@ Combine them: `?seed=7&demo` (add `&debug` to rehearse).
 - **Launcher**: capacity falls with launch energy. Direct needs more energy than Assist.
 - **Delta-v**: rocket equation from engine Isp and fuel. Every burn carries a trajectory-correction allowance (30 m/s plus 5%). Electric engines (Hall, ion) need power at arrival and extra delta-v to capture; a solid motor cannot be trimmed, so it needs 8% more.
 - **Power**: solar falls with 1/r² and degrades each year (silicon twice as fast as GaAs); RTGs are constant but decay (an MMRTG 4%/yr, a GPHS-RTG 1.5%/yr). Load = bus + instrument + transmitter (3 W per radio watt) + heaters.
-- **The dark**: the Moon's 14-day night, every Martian night and Mercury's eclipses run on the battery. It may be discharged to 80% at most, and cycle life falls steeply with depth of discharge (about 2,500 cycles at 40% depth, far fewer at 80%), so a battery that is too small runs flat and one that is cycled too deep wears out before the mission ends. An RTG keeps supplying through the dark.
+- **The dark**: Mars's and Mercury's eclipses run on the battery. It may be discharged to 80% at most, and cycle life falls steeply with depth of discharge (about 2,500 cycles at 40% depth, far fewer at 80%), so a battery that is too small runs flat and one that is cycled too deep wears out before the mission ends. An RTG keeps supplying through the dark.
 - **Thermal**: sunlight (plus RTG and amplifier waste heat) against the radiator limit; the cold side shows up as heater power, and radiators leak heat in the cold.
 - **Data**: returned = min(generated, downlinked); downlink falls with 1/r² from Earth.
 - **Radiation**: dose from the trip, the destination, flybys and flares, against the shielding.
 - **Cost**: parts + rocket + operations ($/year × mission years). Over budget fails R4.
 - **Design life**: every part has one; longer missions can outlive parts.
-- **Hazards**: Mercury 10x sun and eclipses, Moon 14-day night, Mars dust storm (−90% sunlight) and nightly cycling, Europa radiation, Pluto faint signal.
+- **Hazards**: Mercury 10x sun and eclipses, Mars dust storm (−90% sunlight) and eclipse cycling, Europa radiation, Pluto faint signal.
 
 ## Manual test checklist (multiple phones)
 

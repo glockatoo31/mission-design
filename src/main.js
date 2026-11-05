@@ -21,8 +21,8 @@ import { createScene } from './scene.js';
 // ---------- flags + state ----------
 const query = new URLSearchParams(location.search);
 const DEBUG = query.has('debug');
-// ?demo: three contracts, three different traps (deadline + battery, dust storm + mass, radiation + power).
-const DEMO_IDS = query.has('demo') ? ['lunar-survey', 'mars-survey', 'europa-spec'] : null;
+// ?demo: three contracts, three different traps (dust storm + mass, radiation + power, heat + eclipses).
+const DEMO_IDS = query.has('demo') ? ['mars-survey', 'europa-spec', 'mercury-survey'] : null;
 const URL_SEED = query.has('seed') ? Math.abs(parseInt(query.get('seed'), 10)) || 1 : null;
 const STORE = 'mission-design-v8';
 const MAX_ROUNDS = 3;
@@ -300,7 +300,9 @@ function slidersHTML(page) {
 // the gauges, the charts and the craft. Sliders never re-render themselves, only these do.
 function chartsHTML(page) {
   const ch = showBudgets() ? buildCharts(state.design, ESTIMATE) : null;
-  return ch ? `<section class="graphs"><div class="chart-grid">${page.charts.filter((k) => ch[k]).map((k) => renderChart(ch[k])).join('')}</div></section>` : '';
+  // Round 3: every budget on every page, this page's own first.
+  const keys = showAll() ? [...page.charts, ...CHART_ORDER.filter((k) => !page.charts.includes(k))] : page.charts;
+  return ch ? `<section class="graphs"><div class="chart-grid">${keys.filter((k) => ch[k]).map((k) => renderChart(ch[k])).join('')}</div></section>` : '';
 }
 function refreshPage(page) {
   resetCharts();

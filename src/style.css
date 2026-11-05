@@ -251,24 +251,9 @@ input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offs
 .craft, .scene { display: block; width: 100%; height: auto; }
 .craft .part { transition: opacity 160ms var(--ease); }
 .craft.focus .part:not(.hl) { opacity: .45; }
-.craft .bus, .craft .tank, .craft .rtgbody, .craft .battery { fill: var(--raised); stroke: var(--line-strong); stroke-width: 1.5; }
-.craft .bus { stroke: rgba(237, 237, 237, .35); }
-.craft .strut, .craft .fins, .craft .cells, .craft .arcs, .craft .inst * { stroke: var(--text2); stroke-width: 1.5; fill: none; }
-.craft .cells { stroke: rgba(63, 143, 230, .55); stroke-width: 1; }
-.craft .wing { fill: #1f3d6e; stroke: #3f8fe6; stroke-width: 1.5; }
-.craft .slat rect { fill: #8f8f95; }
-.craft .nozzle, .craft .nozzle * { fill: #3a3a3e; stroke: var(--text2); stroke-width: 1.2; }
-.craft .nozzle .fins { fill: none; }
-.craft .dishbowl { fill: #c9c9cc; stroke: var(--text2); stroke-width: 1; }
-.craft .feed { fill: var(--text); }
-.craft .arcs { stroke: var(--muted); opacity: .8; }
-.craft .shieldring { fill: none; stroke: #6c6c72; }
-.craft .shieldhatch { fill: none; stroke: #a1a1a6; stroke-dasharray: 3 3; opacity: .6; }
-.craft .inst * { fill: var(--sunken); }
-.craft .inst .lens { fill: var(--accent); stroke: none; }
-.craft .hl, .craft .hl * { stroke: var(--accent); }
-.craft .hl .dishbowl { fill: #dce8ff; }
-.craft .hl.slat rect { fill: var(--accent); stroke: none; }
+/* sweetie16 keys, same letters as art/art.px.js */
+.k-k { fill: #1a1c2c; } .k-r { fill: #b13e53; } .k-o { fill: #ef7d57; } .k-y { fill: #ffcd75; } .k-p { fill: #a7f070; } .k-g { fill: #38b764; } .k-n { fill: #29366f; }
+.k-b { fill: #3b5dc9; } .k-a { fill: #41a6f6; } .k-c { fill: #73eff7; } .k-w { fill: #f4f4f4; } .k-l { fill: #94b0c2; } .k-s { fill: #566c86; } .k-d { fill: #333c57; }
 .clabel { fill: var(--text); font: 11px var(--mono); }
 
 .scene .ground { fill: var(--card); }

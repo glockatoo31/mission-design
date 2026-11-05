@@ -9,7 +9,7 @@ const min = (...ms) => { const n = ms.filter((m) => typeof m === 'number'); retu
 const pct = (x) => (x >= 10 ? `${Math.round(x)}%` : x >= 1 ? `${x.toFixed(1)}%` : `${x.toFixed(2)}%`);
 const r1 = (x) => Math.round(x * 10) / 10;
 const HAZARD = {
-  moon: 'the 14-day lunar night', mars: 'a global dust storm', mercury: '10x sunlight wearing the arrays out',
+  mars: 'a global dust storm', mercury: '10x sunlight wearing the arrays out',
   europa: 'a long, dim cruise to Jupiter', pluto: 'a decade in near-darkness',
 };
 const list = (k) => STEPS.find((s) => s.key === k).list;

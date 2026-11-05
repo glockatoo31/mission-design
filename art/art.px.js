@@ -12,7 +12,6 @@ function planet(name, base, dark, ...feat) {
     clip([C, C, R], ...feat))
 }
 planet("planet_mercury", "l", "s", ring(8, 9, 2, "s"), ring(15, 14, 3, "s"), px(6, 15, "s"), px(14, 6, "s"))
-planet("planet_moon", "w", "l", ring(8, 8, 2, "l"), ring(14, 12, 3, "l"), ring(10, 16, 1, "l"), px(16, 6, "l"))
 planet("planet_mars", "o", "r", ellipse(12, 6, 4, 1, "w"), rect(5, 12, 5, 2, "r"), rect(11, 15, 6, 2, "r"), px(15, 10, "r"))
 planet("planet_europa", "w", "a", line(3, 9, 12, 14, "a"), line(10, 4, 18, 16, "l"), line(6, 17, 16, 12, "l"), px(8, 8, "a"))
 planet("planet_pluto", "y", "o", circ(10, 14, 3, "w"), circ(13, 13, 3, "w"), rect(4, 5, 5, 2, "o"), px(17, 7, "o"))

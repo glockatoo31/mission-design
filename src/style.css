@@ -1,7 +1,7 @@
 /* Mission Design. Pixel-art console: sweetie16 palette, pixel font, square corners, hard stepped shadows.
    Sprites come from art/art.px.js (pxl). Spacing on a 4px grid. */
 :root {
-  --bg: #1a1c2c; --sunken: #141524; --card: #222640; --raised: #29366f;
+  --bg: #000000; --sunken: #000000; --card: #10121f; --raised: #29366f;
   --line: #333c57; --line-strong: #566c86;
   --text: #f4f4f4; --text2: #94b0c2; --muted: #7a92a8;
   --accent: #41a6f6;

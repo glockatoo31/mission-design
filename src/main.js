@@ -53,6 +53,7 @@ function load() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE));
     if (!s || !s.design || typeof s.step !== 'number') return null;
+    if (s.design.contract && !CONTRACTS.some((c) => c.id === s.design.contract)) return null; // saved game from a removed mission
     if (URL_SEED != null && s.seed !== URL_SEED) return null;
     return s;
   } catch { return null; }

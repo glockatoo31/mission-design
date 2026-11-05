@@ -1,9 +1,11 @@
 // Launch animation: the rocket lifts off, the craft cruises along its route, then lands or
 // orbits and sends data home. update() is driven by the launch loop in main.js.
 import { craftGroup, craftGeom } from './craft.js';
+import { art } from './art.js';
 
-const ROCKET = { light: [18, 64], f9: [21, 74], medium: [24, 84], heavy: [32, 110] };
-const PLANET_R = { mercury: 9, moon: 10, mars: 11, europa: 14, pluto: 8 };
+// Sprite sizes (px) x 2 = scene units, so every pixel is a crisp 2x2 square.
+const ROCKET = { light: [18, 64], f9: [22, 74], medium: [26, 84], heavy: [34, 84] };
+const img = (name, x, y, w, h) => `<image href="${art(name)}" x="${x}" y="${y}" width="${w}" height="${h}" class="pix"/>`;
 const LANDS = new Set(['moon', 'mars']); // shortcut: Pluto's flyby is drawn as an orbit, draw a pass-by if it matters
 const E = [34, 150]; const S = [296, 96]; const EARTH_OPS = [30, 30];
 const ease = (t) => 1 - (1 - t) * (1 - t);
@@ -13,32 +15,28 @@ export function createScene(el, { design, b, failure }) {
   const D = b.D; const land = LANDS.has(D.id); const [rw, rh] = ROCKET[design.launcher];
   const geo = craftGeom(design); const craft = craftGroup(design);
   const path = design.traj === 'assist' ? 'M34 150Q165 10 296 96' : 'M34 150Q165 118 296 96';
-  let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-  const stars = Array.from({ length: 36 }, () => `<circle cx="${(rnd() * 340).toFixed(0)}" cy="${(rnd() * 190).toFixed(0)}" r="${(0.5 + rnd()).toFixed(1)}" class="star"/>`).join('');
   const craftNode = (id, flame) => `<g id="${id}" class="craft">${craft}${flame ? `<polygon id="${id}-f" class="flame"/>` : ''}</g>`;
   el.innerHTML = `<svg viewBox="0 0 340 220" class="scene" role="img" aria-label="Launch animation">
-    <g id="sc-stars">${stars}</g>
+    <defs><pattern id="sc-stp" width="64" height="64" patternUnits="userSpaceOnUse"><image href="${art('stars')}" width="64" height="64" class="pix"/></pattern></defs>
+    <g id="sc-stars"><rect width="340" height="190" fill="url(#sc-stp)"/></g>
     <g id="sc-launch">
       <rect x="0" y="190" width="340" height="30" class="ground"/>
       <g id="sc-rocket">
-        ${rw > 24 ? `<rect x="${-rw / 2 - 9}" y="${-rh * 0.55}" width="8" height="${rh * 0.55}" rx="2" class="rbody"/><rect x="${rw / 2 + 1}" y="${-rh * 0.55}" width="8" height="${rh * 0.55}" rx="2" class="rbody"/>` : ''}
-        <rect x="${-rw / 2}" y="${-rh}" width="${rw}" height="${rh}" class="rbody"/>
-        <path d="M${-rw / 2} ${-rh}Q0 ${-rh - rw * 1.4} ${rw / 2} ${-rh}Z" class="rbody"/>
-        <rect x="${-rw / 2}" y="${-rh * 0.3}" width="${rw}" height="3" class="rband"/>
+        ${img(`rocket_${design.launcher}`, -rw / 2, -rh, rw, rh)}
         <polygon id="sc-flame" class="flame"/>
       </g>
       <g id="sc-burst">${[0, 45, 90, 135, 180, 225, 270, 315].map((a) => `<line x1="0" y1="0" x2="${(Math.cos((a * Math.PI) / 180) * 26).toFixed(1)}" y2="${(Math.sin((a * Math.PI) / 180) * 26).toFixed(1)}"/>`).join('')}</g>
     </g>
     <g id="sc-transit">
-      <circle cx="${E[0]}" cy="${E[1]}" r="15" class="earth"/><text x="${E[0]}" y="${E[1] + 30}" class="slabel" text-anchor="middle">Earth</text>
+      ${img('planet_earth', E[0] - 12, E[1] - 12, 24, 24)}<text x="${E[0]}" y="${E[1] + 30}" class="slabel" text-anchor="middle">Earth</text>
       <path id="sc-path" d="${path}" class="route"/><path id="sc-trail" d="${path}" class="trail"/>
-      <circle cx="${S[0]}" cy="${S[1]}" r="${PLANET_R[D.id]}" style="fill:${D.color}"/><text x="${S[0]}" y="${S[1] + 28}" class="slabel" text-anchor="middle">${D.name}</text>
+      ${img(`planet_${D.id}`, S[0] - 12, S[1] - 12, 24, 24)}<text x="${S[0]}" y="${S[1] + 28}" class="slabel" text-anchor="middle">${D.name}</text>
       ${craftNode('sc-craft1')}
     </g>
     <g id="sc-ops">
-      ${land ? `<circle cx="170" cy="430" r="260" style="fill:${D.color}"/><circle cx="170" cy="430" r="260" class="shade"/>`
-    : `<ellipse cx="170" cy="120" rx="96" ry="30" class="orbit"/><circle cx="170" cy="120" r="46" style="fill:${D.color}"/><circle cx="196" cy="128" r="46" class="shade" clip-path="circle(46px at 170px 120px)"/>`}
-      <circle cx="${EARTH_OPS[0]}" cy="${EARTH_OPS[1]}" r="5" class="earth"/>
+      ${land ? `<rect x="0" y="150" width="340" height="70" style="fill:${D.color}"/><rect x="0" y="150" width="340" height="4" class="shade"/>`
+    : `<ellipse cx="170" cy="120" rx="96" ry="30" class="orbit"/>${img(`planet_${D.id}`, 122, 72, 96, 96)}`}
+      ${img('planet_earth', EARTH_OPS[0] - 12, EARTH_OPS[1] - 12, 24, 24)}
       <line id="sc-beam" x1="0" y1="0" x2="0" y2="0" class="beam"/>
       ${craftNode('sc-craft2', true)}
     </g>

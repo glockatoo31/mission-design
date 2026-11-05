@@ -1,4 +1,4 @@
-import '@fontsource-variable/geist';
+import '@fontsource-variable/pixelify-sans';
 import '@fontsource-variable/geist-mono';
 import './style.css';
 import { DESTINATIONS, CONTRACTS, PAYLOADS, PARAMS, STEPS } from './data.js';
@@ -13,6 +13,7 @@ import {
   buildCharts, renderChart, resetCharts, attachHover, chartForFailure, CHART_ORDER, CHART_LABEL,
 } from './charts.js';
 import { couplingMap } from './coupling.js';
+import { art } from './art.js';
 import { ICON, MARK } from './icons.js';
 import { craftSVG } from './craft.js';
 import { createScene } from './scene.js';
@@ -189,7 +190,7 @@ function screenContract() {
   const cards = CONTRACTS.filter((C) => !DEMO_IDS || DEMO_IDS.includes(C.id)).map((C) => {
     const D = DESTINATIONS.find((x) => x.id === C.dest); const pay = PAYLOADS.find((x) => x.id === C.payload);
     return `<button class="dest ${sel === C.id ? 'sel' : ''}" data-act="contract" data-id="${C.id}">
-      <div class="dest-top"><span class="planet" style="--c:${D.color}"></span>
+      <div class="dest-top"><img class="planet pix" src="${art(`planet_${D.id}`)}" alt="">
         <div><div class="dest-name">${esc(C.name)}</div><div class="diff" role="img" aria-label="Difficulty ${D.difficulty} of 5">${[1, 2, 3, 4, 5].map((i) => `<i class="${i <= D.difficulty ? 'on' : ''}"></i>`).join('')}</div></div>
         <span class="mult">×${D.mult} score</span></div>
       <div class="dest-goal">${esc(C.brief)}</div>

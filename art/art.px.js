@@ -48,12 +48,8 @@ sprite("rocket_medium", { mx: "c", outline: "k" }, rk(6, 20))
   sprite("rocket_heavy", { mx: "c", outline: "k" }, rows.join("\n"))
 }
 
-// ---- stars: seamless 64x64 tile, hand-placed by a fixed LCG ----
+// ---- stars: seamless 64x64 tile, five dim dots only (the background should stay quiet) ----
 sprite("stars", { w: 64, h: 64 }, (c) => {
   let s = 11; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647
-  for (let i = 0; i < 26; i++) {
-    const x = Math.floor(rnd() * 64), y = Math.floor(rnd() * 64), t = rnd()
-    c.px(x, y, t > 0.85 ? "w" : t > 0.5 ? "d" : "s")
-    if (t > 0.94) { c.px(x + 1, y, "d"); c.px(x - 1, y, "d"); c.px(x, y + 1, "d"); c.px(x, y - 1, "d") }
-  }
+  for (let i = 0; i < 5; i++) c.px(Math.floor(rnd() * 64), Math.floor(rnd() * 64), i === 0 ? "d" : "f")
 })

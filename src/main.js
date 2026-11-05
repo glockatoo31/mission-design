@@ -104,12 +104,11 @@ function computeRipple(before, after) {
 
 function rippleHTML() {
   if (!showAll() || !ripple) return '';
-  if (!ripple.length) return '<div class="ripple"><b>That change barely moved any budget.</b></div>';
+  if (!ripple.length) return '<div class="ripple"><b>No big change</b></div>';
   const me = ripple.who; // the lead who just made the change
   const notices = ripple.all.filter((r) => r.to < r.from && r.to < 0.15 && ownerOf(r.k) !== me);
-  return `<div class="ripple"><b>That change moved:</b>${ripple.map((r) => `<span class="rchip ${r.to < 0.15 && r.to < r.from ? 'down' : r.from < 0.15 && r.to >= 0.15 ? 'up' : ''}">${CHART_LABEL[r.k]} <i>${fmtM(r.from)}</i> → <i>${fmtM(r.to)}</i></span>`).join('')}</div>
-    ${notices.length ? `<div class="notice"><b>Change notice</b>${notices.map((r) => `<div>${LEAD[ownerOf(r.k)]}: ${CHART_LABEL[r.k]} ${fmtM(r.from)} → ${fmtM(r.to)}. They must respond.</div>`).join('')}</div>` : ''}
-    <p class="note">Margin left. Same choice, many budgets.</p>`;
+  return `<div class="ripple">${ripple.map((r) => `<span class="rchip ${r.to < 0.15 && r.to < r.from ? 'down' : r.from < 0.15 && r.to >= 0.15 ? 'up' : ''}">${CHART_LABEL[r.k]} <i>${fmtM(r.from)}</i> → <i>${fmtM(r.to)}</i></span>`).join('')}</div>
+    ${notices.length ? `<div class="notice"><b>Change notice</b>${notices.map((r) => `<div>${LEAD[ownerOf(r.k)]}: ${CHART_LABEL[r.k]} ${fmtM(r.from)} → ${fmtM(r.to)}</div>`).join('')}</div>` : ''}`;
 }
 
 // What each choice node in the coupling map says about your design.
@@ -132,7 +131,6 @@ function dashHTML() {
   const bad = marginColor(ch[worst].margin) !== 'green' ? worst : null;
   return `<details class="dash" open><summary>Team dashboard</summary>
     <div class="gauges">${keys.map((k) => `<span class="g ${marginColor(ch[k].margin)}">${CHART_LABEL[k]} <b>${fPct(ch[k].margin)}</b> <i>${LEAD[ownerOf(k)].replace(' Lead', '')}</i></span>`).join('')}</div>
-    <p class="note">${bad ? `Weakest: ${CHART_LABEL[bad]}. Lit up: every choice that feeds it. Fix it together, not alone.` : 'Every budget has margin. Lines show which choices feed which budget.'}</p>
     ${couplingMap(state.design, partName, bad)}</details>`;
 }
 
@@ -145,7 +143,7 @@ function optionsHTML(step) {
   const t = trade(step.key, state.design); const cur = state.design[step.key];
   return `<div class="opts">${t.options.map((o) => `
     <div class="opt ${cur === o.id ? 'sel' : ''}">
-      <button class="opt-main" data-act="pick" data-slot="${step.key}" data-id="${o.id}"><span class="opt-name">${esc(o.name)}</span><span class="opt-blurb">${esc(o.blurb)}</span></button>
+      <button class="opt-main" data-act="pick" data-slot="${step.key}" data-id="${o.id}"><span class="opt-name">${esc(o.name)}</span></button>
       <div class="crits">${t.criteria.map((c) => `<div class="crit ${t.isBest(o, c) ? 'best' : ''}"><span>${c.label}</span><b>${fmtC(c, o.vals[c.id])}</b></div>`).join('')}</div>
     </div>`).join('')}</div>`;
 }
@@ -174,7 +172,7 @@ const stepOf = (k) => FLOW.indexOf(k);
 
 function nav(canGo, nextLabel = 'Next') {
   const back = canGoBack() && state.step > 0;
-  const lock = !canGoBack() && state.step > 0 ? '<span class="lock">No going back in the flight test</span>' : '<span></span>';
+  const lock = '<span></span>';
   return `<nav class="bottom">
     ${back ? '<button class="btn ghost" data-act="back">Back</button>' : lock}
     <button class="btn primary" data-act="next" ${canGo ? '' : 'disabled'}>${nextLabel}</button>
@@ -194,7 +192,6 @@ function screenContract() {
       <div class="dest-top"><img class="planet pix" src="${art(`planet_${D.id}`)}" alt="">
         <div><div class="dest-name">${esc(C.name)}</div><div class="diff" role="img" aria-label="Difficulty ${D.difficulty} of 5">${[1, 2, 3, 4, 5].map((i) => `<i class="${i <= D.difficulty ? 'on' : ''}"></i>`).join('')}</div></div>
         <span class="mult">×${D.mult} score</span></div>
-      <div class="dest-goal">${esc(C.brief)}</div>
       <div class="kv"><span>Instrument</span><b>${esc(pay.name)}</b></div>
       <div class="kv"><span>Science goal</span><b>${C.goalGb} Gbit</b></div>
       <div class="kv"><span>Arrive within</span><b>${fmtYr(C.deadline)}</b></div>
@@ -203,7 +200,6 @@ function screenContract() {
     </button>`;
   }).join('');
   return `${header()}<main><h1>Contract board</h1>
-    <p class="lead">Take a contract. Three rounds: a blind flight test, then each lead sees only their own budgets while the customer changes the contract, then the whole team gets the dashboard for a final attempt. Earn up to three stars a round.</p>
     <div class="dests">${cards}</div>
     <button class="link" data-act="reset">Start over (new team)</button></main>${nav(!!sel)}`;
 }
@@ -214,8 +210,7 @@ const fPct = (m) => (typeof m === 'number' ? `${m < 0 ? '−' : '+'}${Math.min(9
 function screenReqs() {
   const rows = requirements(state.design);
   return `${header()}<main><h1>Requirements</h1>${amendHTML()}
-    <p class="lead">The contract, as testable requirements. Each has an owner. Every choice you make puts new requirements on another lead. At Review you verify them all.</p>
-    <div class="reqs">${rows.map((r) => `<div class="req"><b class="rid">${r.id}</b><div><div class="rtext">${esc(r.text)}</div><div class="rmeta">Owner: ${r.owner}</div><div class="rmeta">Satisfied by: ${r.by}</div></div></div>`).join('')}</div>
+    <div class="reqs">${rows.map((r) => `<div class="req"><b class="rid">${r.id}</b><div><div class="rtext">${esc(r.text)}</div><div class="rmeta">${r.owner}</div></div></div>`).join('')}</div>
   </main>${nav(true)}`;
 }
 
@@ -249,7 +244,7 @@ function amendment() {
   if (p.budget && p.budget !== C0.budget) out.push(`funding $${C0.budget}M → $${p.budget}M`);
   return out.join(', ');
 }
-const amendHTML = () => { const t = amendment(); return t ? `<div class="notice"><b>Contract amendment</b>${esc(t)}. Your round-1 design may no longer fit.</div>` : ''; };
+const amendHTML = () => { const t = amendment(); return t ? `<div class="notice"><b>Contract change</b>${esc(t)}</div>` : ''; };
 
 // The page's own gauges: the interface rows that land on this lead and belong to this page.
 function gaugesHTML(who, labels) {
@@ -262,8 +257,7 @@ function gaugesHTML(who, labels) {
 
 
 function hudHTML() {
-  if (!showBudgets()) return '<div class="hud" id="hud"><span>Round 1 flies blind. Pick, then launch.</span></div>';
-  if (!showAll()) return ''; // round 2: no shared view of cost and lift
+  if (!showAll()) return ''; // rounds 1-2: no shared view of cost and lift
   const b = budgets(state.design, ESTIMATE); const M = budgetMargins(b);
   const g = (label, text, m) => `<span class="g ${marginColor(m)}">${label} <b>${text}</b> <i>${fPct(m)}</i></span>`;
   return `<div class="hud" id="hud">${g('Cost', `${f$(b.cost)} of ${f$(b.budget)}`, M.cost)}${g('Lift', b.cap == null ? '–' : `${R(b.wet)} of ${R(b.cap)} kg`, M.mass)}</div>`;
@@ -272,13 +266,12 @@ function hudHTML() {
 // The mini-challenge card: what to do, and (from round 2) whether it is met and lean.
 function challengeHTML(page, cs) {
   const m = page.minimize; const val = (v) => fmtU(v, m.unit);
-  const goal = `Meet it with the least ${m.label}.`;
-  if (!showBudgets()) return `<div class="challenge"><b>Mini-challenge: ${page.name}.</b> ${goal} You will see how you did after the flight.</div>`;
-  if (cs.met && cs.lean) return `<div class="challenge ok"><b>✓ ${page.name}: met, and lean.</b> Nothing much lighter would do it (${val(cs.cur.value)} ${m.label}).</div>`;
-  if (cs.met) return `<div class="challenge warn"><b>✓ ${page.name}: met, but over-built.</b> ${esc(cs.best.label)} also does it with ${val(cs.cur.value - cs.best.value)} less ${m.label}.</div>`;
-  if (!cs.met && !showAll()) return `<div class="challenge bad"><b>✗ ${page.name}: not met yet.</b> Keep trying parts and sizes on this page.</div>`;
-  if (cs.anyMet) return `<div class="challenge bad"><b>✗ ${page.name}: not met yet.</b> A different part or size here would meet it with the rest of the spacecraft as it is.</div>`;
-  return `<div class="challenge bad"><b>✗ ${page.name}: not met, and nothing on this page can fix it.</b> Something another lead chose is in the way. Open "Who needs what".</div>`;
+  if (!showBudgets()) return `<div class="challenge"><b>${page.name}</b> Least ${m.label}.</div>`;
+  if (cs.met && cs.lean) return `<div class="challenge ok"><b>✓ ${page.name}</b> lean (${val(cs.cur.value)} ${m.label})</div>`;
+  if (cs.met) return `<div class="challenge warn"><b>✓ ${page.name}</b> over-built: ${esc(cs.best.label)} saves ${val(cs.cur.value - cs.best.value)} ${m.label}</div>`;
+  if (!cs.met && !showAll()) return `<div class="challenge bad"><b>✗ ${page.name}</b> not met</div>`;
+  if (cs.anyMet) return `<div class="challenge bad"><b>✗ ${page.name}</b> not met. A part or size here would fix it</div>`;
+  return `<div class="challenge bad"><b>✗ ${page.name}</b> not met. Another lead's choice is in the way</div>`;
 }
 
 // Every part is a trade study: the numbers pull against each other, and the lead records which
@@ -324,15 +317,12 @@ function screenPage(page) {
   return `${header()}${hudHTML()}<main>${debugBar()}
     <div class="eyebrow"><span class="role">Subsystem ${idx + 1} of ${PAGES.length} · ${LEAD[page.who]}</span></div>
     <h1>${page.title}: ${page.name}</h1>
-    <p class="lead">${esc(page.brief(ctx))}</p>
     <div id="challenge">${challengeHTML(page, challengeState(page, d))}</div>
-    <p class="note">${esc(page.physics(ctx))}</p>
     <div class="craft-wrap" id="craft">${craftSVG(d, { screen: page.craft })}</div>
     <div id="gauges">${gaugesHTML(page.who, page.rows)}</div>
     <div id="rip">${rippleHTML()}</div>
     <div id="dash">${dashHTML()}</div>
     ${page.steps.map((k) => `<div class="card"><h3>${STEP[k].label}</h3>${optionsHTML(STEP[k])}</div>`).join('')}
-    <p class="note">Every part is a trade, shown at its usual size. Tap a part to choose it (green is the best of the options on that number).</p>
     ${slidersHTML(page)}
     <div id="charts">${chartsHTML(page)}</div>
     <details class="who"><summary>Who needs what</summary><section class="alloc">${ifacePanel(page.steps[0])}</section></details>
@@ -343,9 +333,8 @@ function screenPage(page) {
 // what it gave up.
 function decisionHTML() {
   return decisions(state.design).map((x) => {
-    const gave = gaveUp(x).slice(0, 2).map((g) => `${g.crit.label} ${fmtC(g.crit, g.value)} (best ${fmtC(g.crit, g.best)}, ${esc(g.bestOption)})`).join(' · ');
     return `<div class="vrow ${x.whyBest === false ? 'yellow' : 'green'}"><div><div>${x.label}: ${esc(x.option.name)}</div>
-      <small>${x.whyBest === false ? `Not the best on ${x.why.label}: ${esc(x.gaps.find((g) => g.crit.id === x.why.id).bestOption)} is. ` : ''}${gave ? `Gave up: ${gave}` : x.whyBest === false ? 'Best on the other criteria.' : 'Best on every criterion.'}</small></div></div>`;
+    </div></div>`;
   }).join('');
 }
 
@@ -355,7 +344,7 @@ function screenReview() {
   const b = budgets(d, ESTIMATE); const C = b.C; const P = b.P;
   const rows = decisionHTML();
   if (!showAll()) {
-    return `${header()}<main><h1>Final design</h1><p class="lead">${esc(C.name)}. Here is every trade you made. Launch it and see what happens.</p>
+    return `${header()}<main><h1>Final design</h1>
       <div class="craft-wrap">${craftSVG(d)}</div>
       <h2>Decision record</h2><div class="verify">${rows}</div>
     </main>${nav(true, 'Launch')}`;
@@ -375,16 +364,12 @@ function screenReview() {
     <h2>System requirements</h2>
     <div class="summary">${reds ? `<b class="red-t">${reds} failing</b> · ` : ''}${yellows ? `<b class="yellow-t">${yellows} thin</b> · ` : ''}${!reds && !yellows ? '<b class="green-t">All verified</b>' : ''}</div>
     <div class="verify">${reqs.map((r) => `<div class="vrow ${r.status}"><b class="rid">${r.id}</b><div><div>${esc(r.text)}</div><small>${r.owner} · ${r.by}</small></div><span class="r-m">${fPct(r.margin)}</span></div>`).join('')}</div>
-    <div class="unlock">Nominal margins shown. Launch adds 0–15% dry-mass growth + 1 deep-space anomaly.</div>
     <h2>Interface requirements</h2>
-    <p class="note">What each lead asked of the others, and whether it was met.</p>
     <div class="verify">${ifs.map(ifRow).join('')}</div>
     <details class="picks"><summary>All budget graphs</summary><div class="chart-grid">${keys.map((k) => renderChart(ch[k])).join('')}</div></details>
     <h2>Subsystem challenges</h2>
-    <p class="note">Each page's mini-challenge: meet the requirement with the least of its own cost.</p>
     <div class="verify">${challengeRows}</div>
     <h2>Decision record</h2>
-    <p class="note">Each trade you made and what it gave up.</p>
     <div class="verify">${rows}</div>
     ${over ? `<div class="warn">Launch blocked: over budget by $${R(b.cost - b.budget)}M.</div>` : ''}
   </main>${nav(!over, 'Launch')}`;
@@ -522,17 +507,13 @@ function showResult(res) {
   const ch = buildCharts(d, res.opts, f);
   const fk = chartForFailure(f, res.b);
   const failChart = ch && fk && ch[fk] ? renderChart(ch[fk]) : '';
-  const map = f ? `<p class="a-sub">The failure traces back to these choices:</p>${couplingMap(d, partName, fk)}` : '';
+  const map = f ? `${couplingMap(d, partName, fk)}` : '';
   const later = f ? downstream(res, fk) : [];
   const warnLater = later.length ? `<div class="warn">Downstream Warning: Even if you survived ${fk ? CHART_LABEL[fk].toLowerCase() : 'that'}, this design also failed ${later.map((k) => CHART_LABEL[k].toLowerCase()).join(' and ')}.</div>` : '';
   // Trace the failed requirement back through the interface that carried it: who asked for what.
   const fr = f ? interfaces(d).find((r) => r.label === failRow(f, res.b)) : null;
-  const top = fr ? [...fr.sources].sort((a, c) => c.v - a.v).slice(0, 2) : [];
-  const reqLine = !rq ? '' : `<p class="a-req"><b>${rq.id} not met:</b> ${esc(rq.text)}. Owner: ${rq.owner}.</p>
-      ${fr && top.length ? `<p class="note"><b>${fr.label}</b> was asked of the ${LEAD[fr.to]}. Biggest demands: ${top.map((s) => `${LEAD[s.from]} (${esc(s.text)}, ${fmtU(s.v, fr.unit)})`).join('; ')}.${fr.have != null ? ` Their design provided ${fmtU(fr.have, fr.unit)}.` : ''}</p>` : ''}`;
+  const reqLine = !rq ? '' : `<p class="a-req"><b>${rq.id} not met:</b> ${esc(rq.text)}</p>`;
   // The trade behind the failure: the decision that gave up the criterion this interface row measures.
-  const traded = fr ? decisions(d).flatMap((x) => gaveUp(x).filter((g) => g.crit.row === fr.label).map((g) => ({ x, g }))).sort((a, c) => c.g.gap - a.g.gap)[0] : null;
-  const tradeLine = traded ? `<p class="note"><b>The trade behind it:</b> the ${LEAD[OWNER[traded.x.key]]} chose ${esc(traded.x.option.name)}${traded.x.why ? ` for ${traded.x.why.label}` : ''}, which gave up ${traded.g.crit.label} (${fmtC(traded.g.crit, traded.g.value)} against ${fmtC(traded.g.crit, traded.g.best)} for ${esc(traded.g.bestOption)}).</p>` : '';
   document.getElementById('result').innerHTML = `
     <div class="outcome ${res.outcome}">
       <div class="o-stars" role="img" aria-label="${stars} of 3 stars">${starsOf(stars)}</div>
@@ -543,20 +524,16 @@ function showResult(res) {
         <div><span>Cost</span><b>${f$(res.cost)}</b></div>
         <div><span>Team code</span><b class="code">${code}</b></div>
       </div>
-      <div class="o-note">${res.points} science pts × ${D.mult} (${esc(C.name)})</div>
-      <div class="o-note">Your Cost: ${f$(res.cost)} | Target Par Cost: ${f$(parCost)}${stars === 2 ? '. Three stars needs a full success within 10% of par.' : over ? '. Over budget: one star at most.' : ''}</div>
+      <div class="o-note">Cost ${f$(res.cost)} · par ${f$(parCost)}</div>
     </div>
     ${f ? `<section class="anomaly"><h2>Anomaly report</h2><p class="a-what">${esc(f.text)}</p>
-      ${reqLine}${tradeLine}${warnLater}
+      ${reqLine}${warnLater}
       ${failChart}
       ${map}
-      <p class="a-sub">The chain of cause and effect:</p>
       ${chains.slice(0, 1).map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('')}
       ${chains.length > 1 ? `<details class="picks"><summary>More causes</summary>${chains.slice(1).map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('')}</details>` : ''}
-      </section>` : over ? `<section class="anomaly"><h2>Requirement check</h2><p class="a-req"><b>R4 not met:</b> Afford it: stay under ${f$(res.b.budget)}. Owner: Flight Director.</p><p class="note">The flight worked, but the design cost ${f$(res.cost - res.b.budget)} too much. The bailout bought this flight only. Cost is a requirement like any other.</p></section>`
-      : `<section class="anomaly good"><h2>Mission report</h2><p>Every constraint held. ${closest ? `Closest call: <b>${closest}</b>.` : ''}</p></section>`}
-    ${ev ? `<p class="note">Random event: ${esc(ev.text)}</p>` : ''}
-    ${first ? '<div class="unlock"><b>Gauges unlocked.</b> Back works now. Next, the customer changes the contract.</div>' : ''}
+      </section>` : over ? `<section class="anomaly"><h2>Requirement check</h2><p class="a-req"><b>Over budget</b> by ${f$(res.cost - res.b.budget)}</p></section>`
+      : `<section class="anomaly good"><h2>Mission report</h2><p>${closest ? `Closest call: <b>${closest}</b>` : 'All constraints held'}</p></section>`}
     ${historyHTML()}
     <div class="end-actions">
       ${last ? '<button class="btn primary" data-act="finish">Mission debrief</button>' : `<button class="btn primary" data-act="redesign">Round ${state.attempt + 1}: ${first ? 'the contract changes' : 'final attempt'}</button>`}
@@ -585,15 +562,6 @@ function screenDebrief() {
   const hs = state.history;
   const best = hs.reduce((a, h) => (!a || h.score > a.score || (h.score === a.score && h.stars > a.stars) ? h : a), null);
   const total = hs.reduce((s, h) => s + h.stars, 0);
-  const first = hs[0];
-  const lessons = [];
-  if (first && first.stars < 2) lessons.push(['A flight test finds what paper cannot.', `Round 1 ${first.outcome === 'none' ? 'failed' : 'fell short'}${first.req ? ` on ${first.req}` : ''}. Every failure traced back to a choice someone made for good reasons.`]);
-  lessons.push(['Requirements flow down.', 'A choice by one lead became a requirement on another: the transmitter loaded Power, the fuel loaded the rocket, the route set the radiation dose.']);
-  const dec = decisions(state.design); const hit = dec.filter((x) => !x.gaps.length).length;
-  const big = dec.flatMap((x) => gaveUp(x).map((g) => ({ x, g }))).sort((a, c) => c.g.gap - a.g.gap)[0];
-  lessons.push(['Every choice is a trade.', `${hit} of ${dec.length} choices were the best option on every criterion.${big ? ` Biggest give-up: ${big.x.option.name} (${big.x.label}) gave up ${big.g.crit.label}, ${fmtC(big.g.crit, big.g.value)} against ${fmtC(big.g.crit, big.g.best)}.` : ''}`]);
-  lessons.push(['Requirements change.', `In round 2 the contract was amended (${amendment() || 'new goal and funding'}). A design is only as good as its latest requirements.`]);
-  lessons.push(['Margin is a choice.', `Your final design's closest call: ${closestCall(budgets(state.design, ESTIMATE)) || 'n/a'}. Launch adds mass growth and one surprise, so thin margin is a bet.`]);
   return `${header()}<main><h1>Mission debrief</h1>
     <div class="outcome ${best.outcome}">
       <div class="o-stars" role="img" aria-label="${best.stars} of 3 stars">${starsOf(best.stars)}</div>
@@ -606,7 +574,6 @@ function screenDebrief() {
       </div>
     </div>
     ${historyHTML()}
-    <section class="anomaly good"><h2>What you practised</h2>${lessons.map(([t, x]) => `<p><b>${t}</b> ${esc(x)}</p>`).join('')}</section>
     <div class="end-actions"><button class="btn primary" data-act="newgame">New mission</button></div>
   </main>`;
 }

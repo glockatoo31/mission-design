@@ -9,8 +9,9 @@
 import { BUS, PAYLOADS, FLYBYS, STRUCTURE_FRACTION } from './data.js';
 import { budgets, budgetMargins, marginColor, ESTIMATE, fmtYr } from './model.js';
 
+// Two leads for a team of two. The old four-lead keys fold into these in add() below.
 export const LEAD = {
-  pt: 'Power & Thermal Lead', comms: 'Comms Lead', prop: 'Propulsion & Trajectory Lead', launch: 'Flight Director',
+  sp: 'Spacecraft Lead', ms: 'Mission Lead',
   sci: 'The contract (bus + instrument)', env: 'The destination',
 };
 
@@ -24,7 +25,7 @@ export function fmtU(v, unit) {
   if (unit === 'yr') return fmtYr(v);
   if (unit === 'krad') return `${n} krad`;
   if (unit === 'Gbit') return v >= 10 ? `${n} Gbit` : `${v.toFixed(1)} Gbit`;
-  return `${v < 1 ? v.toFixed(2) : v.toFixed(1)}x sun`; // 'x sun'
+  return `${v < 1 ? v.toFixed(2) : v.toFixed(1)} suns`; // 1 sun = sunlight at Earth
 }
 
 const payloadOf = (C) => PAYLOADS.find((p) => p.id === C.payload);
@@ -32,12 +33,14 @@ const LIFE_OWNER = { power: 'pt', thermal: 'pt', comms: 'comms', engine: 'prop',
 
 // Interface rows: { label, to, unit, need, have, margin, sources: [{ from, text, v }] }.
 // Rows whose inputs are not chosen yet are left out; sources with no value yet are left out.
+const TEAM = { pt: 'sp', comms: 'sp', prop: 'ms', launch: 'ms', sci: 'ms' };
+const team = (k) => TEAM[k] || k;
 export function interfaces(d) {
   const b = budgets(d, ESTIMATE); const { P, D, tr, C } = b;
   const rows = [];
   const add = (label, to, unit, need, have, margin, sources) => {
     if (need == null || !Number.isFinite(need)) return;
-    rows.push({ label, to, unit, need, have: Number.isFinite(have) ? have : null, margin: typeof margin === 'number' ? margin : null, sources: sources.filter((s) => s.v != null && Number.isFinite(s.v) && s.v > 1e-9) });
+    rows.push({ label, to: team(to), unit, need, have: Number.isFinite(have) ? have : null, margin: typeof margin === 'number' ? margin : null, sources: sources.filter((s) => s.v != null && Number.isFinite(s.v) && s.v > 1e-9).map((s) => ({ ...s, from: team(s.from) })) });
   };
   const eng = P.engine; const rtgHeat = P.power.hotFlux;
   const bus = BUS.powerW + payloadOf(C).powerW;
@@ -47,6 +50,11 @@ export function interfaces(d) {
     { from: 'comms', text: `transmitter (${P.comms.txW} W radio at 33%)`, v: P.comms.powerW },
     { from: 'pt', text: 'heaters', v: b.heater },
   ]);
+  if (D.stormFactor) {
+    add('Storm power', 'pt', 'W', b.stormLoad, b.stormSupply, b.hazardMargin, [
+      { from: 'sci', text: 'bus on survival power', v: BUS.survivalW }, { from: 'pt', text: 'heaters', v: b.heater },
+    ]);
+  }
   if (eng && eng.lowThrust) {
     add('Ion burn power', 'pt', 'W', b.ionLoad, b.supplyArrive, b.ionMargin, [
       { from: 'prop', text: 'ion engine', v: eng.powerW }, { from: 'sci', text: 'bus', v: BUS.powerW }, { from: 'pt', text: 'heaters', v: b.heater },
@@ -127,7 +135,7 @@ export function failRow(f, b) {
   if (f.mode === 'insertion') return f.ion ? 'Ion burn power' : 'Burn';
   if (f.mode === 'flyby') return b.tr.flyby === 'venus' ? 'Venus flyby' : 'Radiation';
   return {
-    brownout: 'Power', freeze: 'Power', storm: 'Power', night: 'Dark period', overheat: 'Heat', radiation: 'Radiation',
+    brownout: 'Power', freeze: 'Power', storm: 'Storm power', night: 'Dark period', overheat: 'Heat', radiation: 'Radiation',
     life: 'Part life', data: 'Data', launcher: 'Lift', cost: 'Cost', deadline: 'Schedule',
   }[f.mode] || null;
 }
@@ -143,11 +151,11 @@ export function requirements(d) {
   const b = budgets(d, ESTIMATE); const M = budgetMargins(b); const { C, D } = b;
   const min = (...ms) => { const n = ms.filter((m) => typeof m === 'number'); return n.length ? Math.min(...n) : null; };
   const rows = [
-    { id: 'R1', name: 'Get there', text: `Get there: arrive within ${fmtYr(C.deadline)} and make the arrival burn`, margin: min(M.time, M.dv), owner: 'Propulsion & Trajectory Lead', by: 'Route · Engine · Fuel' },
-    { id: 'R2', name: 'Do the science', text: `Do the science: return ${C.goalGb} Gbit`, margin: M.data, owner: 'Comms Lead', by: 'Antenna · Instrument' },
+    { id: 'R1', name: 'Get there', text: `Get there: arrive within ${fmtYr(C.deadline)} and make the arrival burn`, margin: min(M.time, M.dv), owner: 'Mission Lead', by: 'Route · Engine · Fuel' },
+    { id: 'R2', name: 'Do the science', text: `Do the science: return ${C.goalGb} Gbit`, margin: M.data, owner: 'Spacecraft Lead', by: 'Antenna · Instrument' },
     // At Pluto the hazard is the faint signal, which is the science requirement already.
-    { id: 'R3', name: 'Stay alive', text: `Stay alive: ${D.hazard.name}, power, heat and part life`, margin: min(M.power, M.thermal, M.rad, M.life, M.night, D.id === 'pluto' ? null : b.hazardMargin), owner: 'Power & Thermal Lead', by: HAZARD_BY[D.id] },
-    { id: 'R4', name: 'Afford it and launch it', text: `Afford it: stay under $${C.budget}M and fit the rocket`, margin: min(M.cost, M.mass), owner: 'Flight Director', by: 'Every part · Rocket' },
+    { id: 'R3', name: 'Stay alive', text: `Stay alive: ${D.hazard.name}, power, heat and part life`, margin: min(M.power, M.thermal, M.rad, M.life, M.night, D.id === 'pluto' ? null : b.hazardMargin), owner: 'Spacecraft Lead', by: HAZARD_BY[D.id] },
+    { id: 'R4', name: 'Afford it and launch it', text: `Afford it: stay under $${C.budget}M and fit the rocket`, margin: min(M.cost, M.mass), owner: 'Mission Lead', by: 'Every part · Rocket' },
   ];
   for (const r of rows) r.status = marginColor(r.margin);
   return rows;

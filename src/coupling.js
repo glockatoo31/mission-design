@@ -19,13 +19,16 @@ export const COUPLING = {
   launcher: ['mass', 'cost'],
 };
 
+const short = (s) => (s.length > 28 ? `${s.slice(0, 27)}…` : s);
 const budgetKey = (k) => (k === 'night' ? 'power' : k);
 
 // Two columns: your choices on the left, budgets on the right, a line for every dependency.
 // failKey lights up the broken budget and every choice that feeds it.
-export function couplingMap(d, partName, failKey) {
+// level: 'red' for a budget that actually failed, 'yellow' for one that is only thin (drawn amber, not red).
+export function couplingMap(d, partName, failKey, level = 'red') {
+  const tone = level === 'yellow' ? ' warn' : '';
   const fail = failKey ? budgetKey(failKey) : null;
-  const W = 340; const rowH = 34; const top = 4; const lx = 4; const lw = 132; const rx = 216; const rw = 120;
+  const W = 340; const rowH = 34; const top = 4; const lx = 4; const lw = 172; const rx = 248; const rw = 88;
   const gridH = BUDGETS.length * rowH;
   const H = top + gridH;
   const ly = (i) => top + ((i + 0.5) * gridH) / CHOICES.length; // choice centers
@@ -39,20 +42,20 @@ export function couplingMap(d, partName, failKey) {
         const j = BUDGETS.indexOf(b); if (j < 0) continue;
         const isHot = fail === b;
         if (isHot !== hot) continue;
-        g.push(`<line x1="${lx + lw}" y1="${ly(i)}" x2="${rx}" y2="${ry(j)}" class="cl ${isHot ? 'hot' : ''}"/>`);
+        g.push(`<line x1="${lx + lw}" y1="${ly(i)}" x2="${rx}" y2="${ry(j)}" class="cl ${isHot ? `hot${tone}` : ''}"/>`);
       }
     });
   }
   CHOICES.forEach((c, i) => {
     const hot = fail && feeds(c);
-    g.push(`<rect x="${lx}" y="${ly(i) - 14}" width="${lw}" height="28" rx="7" class="cn ${hot ? 'hot' : ''}"/>`);
-    g.push(`<text x="${lx + 9}" y="${ly(i) - 1}" class="cn-t">${CHOICE_LABEL[c]}</text>`);
-    g.push(`<text x="${lx + 9}" y="${ly(i) + 10}" class="cn-s">${partName(c)}</text>`);
+    g.push(`<rect x="${lx}" y="${ly(i) - 17}" width="${lw}" height="34" rx="0" class="cn ${hot ? `hot${tone}` : ''}"/>`);
+    g.push(`<text x="${lx + 9}" y="${ly(i) - 3}" class="cn-t">${CHOICE_LABEL[c]}</text>`);
+    g.push(`<text x="${lx + 9}" y="${ly(i) + 14}" class="cn-s">${short(partName(c))}</text>`);
   });
   BUDGETS.forEach((b, j) => {
     const hot = fail === b;
-    g.push(`<rect x="${rx}" y="${ry(j) - 13}" width="${rw}" height="26" rx="7" class="bn ${hot ? 'hot' : ''}"/>`);
-    g.push(`<text x="${rx + rw / 2}" y="${ry(j) + 5}" class="bn-t ${hot ? 'hot' : ''}" text-anchor="middle">${BUDGET_LABEL[b]}</text>`);
+    g.push(`<rect x="${rx}" y="${ry(j) - 13}" width="${rw}" height="26" rx="0" class="bn ${hot ? `hot${tone}` : ''}"/>`);
+    g.push(`<text x="${rx + rw / 2}" y="${ry(j) + 5}" class="bn-t ${hot ? `hot${tone}` : ''}" text-anchor="middle">${BUDGET_LABEL[b]}</text>`);
   });
   return `<svg viewBox="0 0 ${W} ${H}" class="cmap" role="img" aria-label="Which choices feed which budgets">${g.join('')}</svg>`;
 }

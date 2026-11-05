@@ -2,19 +2,20 @@
 // orbits and sends data home. update() is driven by the launch loop in main.js.
 import { craftGroup, craftGeom } from './craft.js';
 import { art } from './art.js';
+import { routeGeom, mapBase } from './route.js';
 
 // Sprite sizes (px) x 2 = scene units, so every pixel is a crisp 2x2 square.
-const ROCKET = { light: [18, 64], f9: [22, 74], medium: [26, 84], heavy: [34, 84] };
+const ROCKET = { light: [14, 68], f9: [26, 64], medium: [14, 104], heavy: [38, 94] };
 const img = (name, x, y, w, h) => `<image href="${art(name)}" x="${x}" y="${y}" width="${w}" height="${h}" class="pix"/>`;
 // shortcut: every mission is an orbiter or flyby, and flybys (Europa, Pluto) are drawn as an orbit; draw a pass-by if it matters
-const E = [34, 150]; const S = [296, 96]; const EARTH_OPS = [30, 30];
+const EARTH_OPS = [30, 30];
 const ease = (t) => 1 - (1 - t) * (1 - t);
 const lerp = (a, b, t) => a + (b - a) * t;
 
 export function createScene(el, { design, b, failure }) {
   const D = b.D; const [rw, rh] = ROCKET[design.launcher];
   const geo = craftGeom(design); const craft = craftGroup(design);
-  const path = design.traj === 'assist' ? 'M34 150Q165 10 296 96' : 'M34 150Q165 118 296 96';
+  const R = routeGeom(D, design.traj); const path = R.d; // the real route through the solar system
   const craftNode = (id, flame) => `<g id="${id}" class="craft">${craft}${flame ? `<polygon id="${id}-f" class="flame"/>` : ''}</g>`;
   el.innerHTML = `<svg viewBox="0 0 340 220" class="scene" role="img" aria-label="Launch animation">
     <defs><pattern id="sc-stp" width="64" height="64" patternUnits="userSpaceOnUse"><image href="${art('stars')}" width="64" height="64" class="pix"/></pattern></defs>
@@ -28,9 +29,8 @@ export function createScene(el, { design, b, failure }) {
       <g id="sc-burst">${[0, 45, 90, 135, 180, 225, 270, 315].map((a) => `<line x1="0" y1="0" x2="${(Math.cos((a * Math.PI) / 180) * 26).toFixed(1)}" y2="${(Math.sin((a * Math.PI) / 180) * 26).toFixed(1)}"/>`).join('')}</g>
     </g>
     <g id="sc-transit">
-      ${img('planet_earth', E[0] - 12, E[1] - 12, 24, 24)}<text x="${E[0]}" y="${E[1] + 30}" class="slabel" text-anchor="middle">Earth</text>
+      ${mapBase(D, R.marks)}
       <path id="sc-path" d="${path}" class="route"/><path id="sc-trail" d="${path}" class="trail"/>
-      ${img(`planet_${D.id}`, S[0] - 12, S[1] - 12, 24, 24)}<text x="${S[0]}" y="${S[1] + 28}" class="slabel" text-anchor="middle">${D.name}</text>
       ${craftNode('sc-craft1')}
     </g>
     <g id="sc-ops">
@@ -65,7 +65,7 @@ export function createScene(el, { design, b, failure }) {
       $('sc-rocket').style.opacity = dead && failure.mode === 'launcher' ? 0 : 1;
     } else if (ph === 1) {
       const pt = route.getPointAtLength(p * total);
-      place($('sc-craft1'), pt.x, pt.y, 0.22);
+      place($('sc-craft1'), pt.x, pt.y, 0.14);
       $('sc-trail').style.strokeDasharray = `${p * total} ${total}`;
       mark = [pt.x, pt.y];
     } else {

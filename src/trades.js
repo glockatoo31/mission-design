@@ -10,16 +10,17 @@ import { fmtU } from './syseng.js';
 
 // `row` links a criterion to the interface row it loads, so a failure can be traced to the trade.
 // `risk` is the heritage criterion: how much heavier than planned this part tends to come out.
-const RISK = { id: 'risk', label: 'Risk', unit: '%', better: 'low', row: 'Lift' };
+const RISK = { id: 'risk', label: 'Mass risk', unit: '%', better: 'low', row: 'Lift' };
 const CRITERIA = {
   comms: [
     { id: 'data', label: 'Data', unit: 'Gbit/yr', better: 'high', row: 'Data' },
     { id: 'power', label: 'Power', unit: 'W', better: 'low', row: 'Power' },
+    { id: 'mass', label: 'Mass', unit: 'kg', better: 'low', row: 'Lift' },
     { id: 'cost', label: 'Cost', unit: '$M', better: 'low', row: 'Cost' },
     RISK,
   ],
   traj: [
-    { id: 'time', label: 'Speed', unit: 'yr', better: 'low', row: 'Schedule' },
+    { id: 'time', label: 'Trip time', unit: 'yr', better: 'low', row: 'Schedule' },
     { id: 'burn', label: 'Burn', unit: 'm/s', better: 'low', row: 'Burn' },
     { id: 'cost', label: 'Cost', unit: '$M', better: 'low', row: 'Cost' },
   ],
@@ -57,7 +58,7 @@ const risk = (o) => HERITAGE[o.heritage || 'proven'].growth * 100;
 
 // Each option's value on each criterion, at this destination.
 const VALUE = {
-  comms: (P, D, o) => ({ data: (P.comms.rateGb * D.contact) / (D.earthAU * D.earthAU), power: P.comms.powerW, cost: P.comms.cost, risk: risk(o) }),
+  comms: (P, D, o) => ({ data: (P.comms.rateGb * D.contact) / (D.earthAU * D.earthAU), power: P.comms.powerW, mass: P.comms.mass, cost: P.comms.cost, risk: risk(o) }),
   tank: (P, D, o) => ({ speed: P.tank.prop, mass: P.tank.mass + P.tank.prop, cost: P.tank.cost, risk: risk(o) }),
   thermal: (P, D, o) => ({ cool: P.thermal.hotLimit, shield: P.thermal.radTol, mass: P.thermal.mass, risk: risk(o) }),
   power: (P, D, o) => ({ watts: P.power.solarW * Math.min(1 / (D.sunAU * D.sunAU), D.solarCap) + P.power.rtgW, mass: P.power.mass, cost: P.power.cost, risk: risk(o) }),

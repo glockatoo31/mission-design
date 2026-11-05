@@ -1,7 +1,7 @@
 # Mission Design
 
-A 20-minute classroom demo for engineering freshmen. Teams of five share one phone, take a space
-mission contract, build a spacecraft together as four leads, launch it, and learn from what breaks.
+A 20-minute classroom demo for engineering freshmen. Pairs share one phone, take a space
+mission contract, build a spacecraft together, launch it, and learn from what breaks.
 Static, client-only (Vite + vanilla JS). No backend, no accounts, no network calls after load.
 
 ## The game
@@ -11,16 +11,16 @@ Three rounds, about five minutes each.
 1. **Contract.** Pick one of four missions, one per destination, all orbiters or flybys (Mars, Europa, Mercury, Pluto). Each fixes the
    instrument, the science goal, the deadline and the funding.
 2. **Requirements.** The contract becomes four plain requirements (R1 get there, R2 do the science,
-   R3 stay alive, R4 afford it and launch it), each with an owner and its own gauge.
-3. **Six subsystem pages**, one per subsystem, passing the phone between four leads. The spacecraft starts
+   R3 stay alive, R4 afford it and launch it), each with its own gauge.
+3. **Six subsystem pages**, one per subsystem, working together. The spacecraft starts
    as a flying baseline. Each page has its own **mini-challenge**: meet that subsystem's requirement with
    the least of its own cost.
-   - **Communications** (Comms Lead): *Close the link*, with the least power draw.
-   - **Trajectory** (Propulsion & Trajectory Lead): *Make the window*, with the smallest burn.
-   - **Propulsion** (same lead): *Make the burn*, with the lightest engine and tank.
-   - **Thermal** (Power & Thermal Lead): *Stay in range*, with the least mass.
-   - **Power** (same lead): *Keep the lights on*, with the least mass.
-   - **Rocket** (Flight Director): *Lift it*, with the cheapest rocket.
+   - **Communications** *Close the link*, with the least power draw.
+   - **Trajectory** *Make the window*, with the smallest burn.
+   - **Propulsion**: *Make the burn*, with the lightest engine and tank.
+   - **Thermal** *Stay in range*, with the least mass.
+   - **Power**: *Keep the lights on*, with the least mass.
+   - **Rocket** *Lift it*, with the cheapest rocket.
 
    Every subsystem offers several **real parts**, each with its own character and a **heritage** (flight-proven,
    qualified, or new): four antennas (X-band patch, X-band dish, deployable mesh, Ka-band), five power sources
@@ -35,36 +35,35 @@ Three rounds, about five minutes each.
    much of it shows up. A cheap, new part has a hidden cost.
 
    Every part is also a small **trade study**: each option shows its numbers at its usual size on criteria that
-   pull against each other, including its risk (the best per criterion is green), and the lead taps a part to pick it. From round 2 a page shows live, as you drag the sliders, whether its challenge is
+   pull against each other, including its risk (the best per criterion is green), and you tap the arrows to pick one. From round 2 a page shows live, as you drag the sliders, whether its challenge is
    **met and lean**, **met but over-built** (and which part and size would do it with less), **not met**, or
-   **not met and nothing on the page can fix it** (another lead's choice is in the way).
+   **not met and nothing on the page can fix it** (another subsystem's choice is in the way).
 4. **Review**, then **launch** (about 30 seconds, with a 2x button from round 2).
 5. **Result**: up to three stars. ★ you arrived and operated, ★★ you met the science goal, ★★★ you did it
    within 10% of the par cost (the cheapest possible design). Going over budget fails R4 and caps the
    round at one star.
 
 **Round 1 is a blind flight test.** No gauges, no Back button; an over-budget design still flies (a
-bailout). Most teams fail, and the anomaly report names the requirement that failed, its owner, and
-which lead's demands caused it.
+bailout). Most teams fail, and the anomaly report names the requirement that failed and
+which subsystems' demands caused it.
 
-**Round 2: the contract changes.** The customer amends it (a better instrument, a bigger science goal,
-more funding), so the round-1 design no longer fits. Gauges unlock: each lead sees only their own
-(silos), cost and lift are shared, and the full dashboard waits for Review. When a choice hurts a budget
-someone else owns, a **change notice** names that lead.
+**Round 2: silos.** Same contract, same requirements. Each page shows only its own subsystem's gauges
+and budget charts, so the couplings between subsystems bite at launch.
 
-**Round 3: final attempt**, then a **debrief**: stars, best score, team code, and what the team practised.
+**Round 3: the dashboard.** Same contract again. Every page shows every budget, the coupling map, and a
+**This hurt other budgets** notice when a change pushes another budget into the red, and a tab bar jumps between subsystems. Between rounds a takeaway screen says what the last round showed. Then a **debrief**: stars,
+best score, team code.
 
 ### Systems engineering in it
 
-- Requirements flow down: a choice by one lead puts requirements on another (a 40 W radio means Power
-  must supply 120 W because the amplifier is 33% efficient, and Thermal must reject its heat). Each lead's
-  "Who needs what" shows what is asked of them and what their choices ask of others.
+- Requirements flow down: a choice on one subsystem puts requirements on another (a 40 W radio means Power
+  must supply 120 W because the amplifier is 33% efficient, and Thermal must reject its heat). Each page's
+  "Who needs what" shows what is asked of that subsystem.
 - Every choice is a trade, and it is recorded. Review shows a decision record (what was chosen, why,
   whether it was the best on that reason, what it gave up), and a failure names the trade behind it.
-  When the contract changes in round 2, every reason is cleared and the team re-confirms each trade.
 - Margins are nominal. Launch adds 0-15% dry-mass growth and one anomaly, and funding is set so no design
   can have every margin green, so some margin is always a bet.
-- Requirements change, and late choices break earlier leads' budgets.
+- Late choices on one page break budgets on others.
 
 ## Run locally
 
@@ -86,11 +85,10 @@ npm run balance
 
 Every part type is tried at several sizes: 192,000 designs per contract (576,000 where there is a dark period to
 survive: Mars and Mercury, which also try three battery sizes). The test streams all of them through the same
-`src/model.js` the app uses, for both the original and the amended contract (a few minutes), and checks that:
+`src/model.js` the app uses, for every contract (a few minutes), and checks that:
 
 - every contract has winning designs and funding keeps the par cost 10-14% inside it; `src/par.js` (the stored cheapest designs) matches the solver
 - no design has every bar green, and the best winner runs 5-14% thin
-- the amended contract is still winnable at about 12% margin, and the amendment bites (the round-1 cheapest design stops winning, or the cheapest design costs 25% more)
 - each contract has at least three reachable failure modes including its own hazard
 - interface demands add up to the need (power, heat, lift, cost), and a failure traces to the interface in deficit
 - every choice is a real trade (no option is best on every criterion), and the decision record works for sampled designs
@@ -159,15 +157,14 @@ Combine them: `?seed=7&demo` (add `&debug` to rehearse).
 Open the URL on 3-4 phones (or tabs, at least one real phone):
 
 - [ ] Contract board shows the contracts (3 with `?demo`); picking one and tapping Next shows four requirements.
-- [ ] Six subsystem pages (Communications, Trajectory, Propulsion, Thermal, Power, Rocket), each with a titled mini-challenge, a "Pass phone →" lead badge and real part names; the baseline is preselected and the craft drawing highlights the page's part.
+- [ ] Six subsystem pages (Communications, Trajectory, Propulsion, Thermal, Power, Rocket), each with a titled mini-challenge, real part names; the baseline is preselected and the craft drawing highlights the page's part.
 - [ ] Each part shows its options with 2-3 numbers, the best per number in green. Tapping a number picks the option and shows "for <criterion>"; "Review" stays disabled until all seven have a reason.
 - [ ] Round 1: no gauges, "Round 1 flies blind", no Back button. Review lists the choices. Launch runs about 30 s.
 - [ ] An over-budget round 1 shows the bailout banner, and the result is capped at one star with "R4 not met".
-- [ ] A failing round names the requirement, the owner, and the biggest demands behind it.
-- [ ] Round 2: the requirements screen shows a "Contract amendment" banner; each page now shows its challenge status (met and lean, over-built, not met), its own gauges and charts, and a Cost/Lift bar; the 2x button works on the launch.
-- [ ] Choosing Twin RTG (or a large dish) shows a "Change notice" naming another lead.
-- [ ] Review shows the decision record; round 2+ also shows system requirements, interface requirements and "All budget graphs", and over-budget designs cannot launch.
-- [ ] Round 2 clears every reason and asks the team to re-confirm each trade. A failure's anomaly report includes "The trade behind it".
+- [ ] A failing round names the requirement and the biggest demands behind it.
+- [ ] Round 2: same contract; each page shows its challenge status (met and lean, over-built, not met) and only its own gauges and charts; the 2x button works on the launch.
+- [ ] Round 3: every page shows all ten budget charts and the team dashboard. Choosing Twin RTG (or a large dish) shows a "This hurt other budgets" notice.
+- [ ] Review shows the decision record; round 3 also shows system requirements, interface requirements and "All budget graphs", and over-budget designs cannot launch.
 - [ ] Result shows stars, score, "Your Cost | Target Par Cost" and a team code; round 3 ends with "Mission debrief".
 - [ ] **Seed test:** `?seed=5` on two phones, build the same design, launch: same outcome, event and team code.
 - [ ] **Debug test:** `?debug` → "Cheapest full success" builds a winning design that flies to ★★★.
@@ -176,7 +173,7 @@ Open the URL on 3-4 phones (or tabs, at least one real phone):
 
 ## Files
 
-- `src/data.js`: destinations, contracts and their amendments, formulas, events. `src/parts.js`: the parts catalog (names, numbers, heritage). `src/par.js`: generated cheapest designs.
+- `src/data.js`: destinations, contracts, formulas, events. `src/parts.js`: the parts catalog (names, numbers, heritage). `src/par.js`: generated cheapest designs.
 - `src/model.js`: physics, launch simulation, anomaly chains, the design space and par cost. No DOM; shared with the balance script.
 - `src/syseng.js`: requirements and interface requirements (who asks what of whom).
 - `src/trades.js`: the trade table for each choice (criteria, best option) and the decision record.

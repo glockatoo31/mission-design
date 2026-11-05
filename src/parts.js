@@ -60,6 +60,6 @@ export const TANKS = [
 export const LAUNCHERS = [
   { id: 'light', name: 'Electron-class light launcher', blurb: 'Cheap. Small payloads.', heritage: 'proven', cost: 60, baseKg: 2400, falloff: 35 },
   { id: 'f9', name: 'Falcon 9-class launcher', blurb: 'Reusable-class workhorse. Good value.', heritage: 'proven', cost: 95, baseKg: 3600, falloff: 46 },
-  { id: 'medium', name: 'Atlas V-class medium launcher', blurb: 'Reliable and a notch bigger.', heritage: 'proven', cost: 130, baseKg: 5000, falloff: 50 },
+  { id: 'medium', name: 'Ares I-class medium launcher', blurb: 'A tall solid-fuel booster under a liquid upper stage.', heritage: 'proven', cost: 130, baseKg: 5000, falloff: 50 },
   { id: 'heavy', name: 'Falcon Heavy-class heavy launcher', blurb: 'Huge energy. Huge price.', heritage: 'proven', cost: 200, baseKg: 11000, falloff: 55 },
 ];

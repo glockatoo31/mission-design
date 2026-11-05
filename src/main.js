@@ -1,12 +1,11 @@
-import '@fontsource-variable/pixelify-sans';
-import '@fontsource-variable/geist-mono';
+import '@fontsource-variable/geist';
 import './style.css';
 import { DESTINATIONS, CONTRACTS, PAYLOADS, PARAMS, STEPS } from './data.js';
 import {
   budgets, budgetMargins, marginColor, parts, simulate, explain, launchConditions, teamCode, ESTIMATE,
   isComplete, par, parDesign, paramVal, mulberry32, fmtYr, fmtGb,
 } from './model.js';
-import { LEAD, fmtU, interfaces, incoming, outgoing, failRow, requirements, reqFor } from './syseng.js';
+import { fmtU, interfaces, incoming, failRow, requirements, reqFor } from './syseng.js';
 import { trade, decisions, gaveUp, fmtC } from './trades.js';
 import { PAGES, challengeState, knobsFor } from './pages.js';
 import {
@@ -14,6 +13,7 @@ import {
 } from './charts.js';
 import { couplingMap } from './coupling.js';
 import { art } from './art.js';
+import { trajMapSVG } from './route.js';
 import { ICON, MARK } from './icons.js';
 import { craftSVG } from './craft.js';
 import { createScene } from './scene.js';
@@ -26,23 +26,29 @@ const DEMO_IDS = query.has('demo') ? ['mars-survey', 'europa-spec', 'mercury-sur
 const URL_SEED = query.has('seed') ? Math.abs(parseInt(query.get('seed'), 10)) || 1 : null;
 const STORE = 'mission-design-v8';
 const MAX_ROUNDS = 3;
+// The three-round teaching arc. Each round has a name and one thing to learn, shown all the way through.
+const ROUNDS = [
+  { name: 'Blind', learn: 'Fly it blind. See what breaks, then find out why.' },
+  { name: 'Silos', learn: "You see one subsystem's budgets at a time. One choice feeds many budgets." },
+  { name: 'Team', learn: 'You see every budget. Trade between subsystems to fix it.' },
+];
+const roundNo = () => Math.min(state.attempt, MAX_ROUNDS);
 
 // The loop: take a contract, read its requirements, then one page per subsystem (each with its
 // own mini-challenge, passing the phone between leads), review, launch. Three rounds: a blind
-// flight test, then siloed budgets with the contract amended, then the full dashboard. Then a debrief.
+// flight test, then siloed budgets, then the full dashboard, all on the same contract. Then a debrief.
 const FLOW = ['contract', 'reqs', ...PAGES.map((p) => p.key), 'review', 'launch', 'debrief'];
 const STEP = Object.fromEntries(STEPS.map((s) => [s.key, s]));
 const PAGE = Object.fromEntries(PAGES.map((p) => [p.key, p]));
 const STEP_NAME = { contract: 'Contract', reqs: 'Requirements', review: 'Review', launch: 'Launch', debrief: 'Debrief', ...Object.fromEntries(PAGES.map((p) => [p.key, p.title])) };
 // Which lead owns each part.
-const OWNER = { power: 'pt', thermal: 'pt', comms: 'comms', traj: 'prop', engine: 'prop', tank: 'prop', launcher: 'launch' };
+const OWNER = { power: 'sp', thermal: 'sp', comms: 'sp', traj: 'ms', engine: 'ms', tank: 'ms', launcher: 'ms' };
 const stepName = (k) => STEP_NAME[k];
-const roleBadge = (k) => (PAGE[k] ? `Pass phone → ${LEAD[PAGE[k].who]}` : 'Role: Flight Director');
 
 // The starter design: a flying baseline made of the standard part in every slot, at its usual size.
 function blank() {
   // why: the criterion each part was chosen for (the trade-study rationale).
-  const d = { contract: null, changed: false, why: {}, ...Object.fromEntries(Object.entries(PARAMS).map(([k, p]) => [k, p.def])) };
+  const d = { contract: null, why: {}, ...Object.fromEntries(Object.entries(PARAMS).map(([k, p]) => [k, p.def])) };
   const start = { comms: 'xdish', traj: 'direct', engine: 'biprop', tank: 'ti', thermal: 'louver', power: 'gaas', launcher: 'medium' };
   for (const s of STEPS) { d[s.key] = start[s.key]; Object.assign(d, s.list.find((x) => x.id === start[s.key]).def || {}); }
   return d;
@@ -78,7 +84,7 @@ const key = () => FLOW[state.step];
 // so coupling bites). Round 3: everyone sees every budget on the dashboard, and the ripple.
 const showBudgets = () => state.attempt > 1; // own-subsystem budgets
 const showAll = () => state.attempt > 2; // dashboard, coupling, cross-subsystem views
-const canGoBack = () => state.attempt > 1;
+const canGoBack = () => true; // a blind round-1 mis-tap can be undone before launch
 
 // ---------- budget chips + graphs (round 2: own subsystem, round 3: all) ----------
 function charts() { return isComplete(state.design) ? buildCharts(state.design, ESTIMATE) : null; }
@@ -90,8 +96,8 @@ const margins = () => { const ch = charts(); return ch ? Object.fromEntries(Obje
 const fmtM = (m) => (m == null ? '–' : m >= 1 ? '100%+' : m <= -1 ? '−100%' : `${m < 0 ? '−' : ''}${Math.abs(R(m * 100))}%`);
 
 // Every budget has an owner. A change that hurts a budget someone else owns is a change notice to them.
-const BUDGET_OWNER = { power: 'pt', thermal: 'pt', rad: 'pt', night: 'pt', data: 'comms', time: 'prop', dv: 'prop', mass: 'launch', cost: 'launch' };
-const ownerOf = (k) => (k === 'life' ? ((interfaces(state.design).find((r) => r.label === 'Part life') || {}).to || 'pt') : BUDGET_OWNER[k]);
+const BUDGET_OWNER = { power: 'sp', thermal: 'sp', rad: 'sp', night: 'sp', data: 'sp', time: 'ms', dv: 'ms', mass: 'ms', cost: 'ms' };
+const ownerOf = (k) => (k === 'life' ? ((interfaces(state.design).find((r) => r.label === 'Part life') || {}).to || 'sp') : BUDGET_OWNER[k]);
 
 function computeRipple(before, after) {
   if (!before || !after) return null;
@@ -105,10 +111,10 @@ function computeRipple(before, after) {
 function rippleHTML() {
   if (!showAll() || !ripple) return '';
   if (!ripple.length) return '<div class="ripple"><b>No big change</b></div>';
-  const me = ripple.who; // the lead who just made the change
-  const notices = ripple.all.filter((r) => r.to < r.from && r.to < 0.15 && ownerOf(r.k) !== me);
+  const mine = (PAGE[key()] || { charts: [] }).charts; // this page's own budgets
+  const notices = ripple.all.filter((r) => r.to < r.from && r.to < 0.15 && !mine.includes(r.k));
   return `<div class="ripple">${ripple.map((r) => `<span class="rchip ${r.to < 0.15 && r.to < r.from ? 'down' : r.from < 0.15 && r.to >= 0.15 ? 'up' : ''}">${CHART_LABEL[r.k]} <i>${fmtM(r.from)}</i> → <i>${fmtM(r.to)}</i></span>`).join('')}</div>
-    ${notices.length ? `<div class="notice"><b>Change notice</b>${notices.map((r) => `<div>${LEAD[ownerOf(r.k)]}: ${CHART_LABEL[r.k]} ${fmtM(r.from)} → ${fmtM(r.to)}</div>`).join('')}</div>` : ''}`;
+    ${notices.length ? `<div class="notice"><b>This hurt other budgets</b>${notices.map((r) => `<div>${CHART_LABEL[r.k]} ${fmtM(r.from)} → ${fmtM(r.to)}</div>`).join('')}</div>` : ''}`;
 }
 
 // What each choice node in the coupling map says about your design.
@@ -128,10 +134,16 @@ function dashHTML() {
   const keys = CHART_ORDER.filter((k) => ch[k] && typeof ch[k].margin === 'number');
   if (!keys.length) return '';
   const worst = keys.reduce((a, k) => (ch[k].margin < ch[a].margin ? k : a), keys[0]);
-  const bad = marginColor(ch[worst].margin) !== 'green' ? worst : null;
-  return `<details class="dash" open><summary>Team dashboard</summary>
-    <div class="gauges">${keys.map((k) => `<span class="g ${marginColor(ch[k].margin)}">${CHART_LABEL[k]} <b>${fPct(ch[k].margin)}</b> <i>${LEAD[ownerOf(k)].replace(' Lead', '')}</i></span>`).join('')}</div>
-    ${couplingMap(state.design, partName, bad)}</details>`;
+  const level = marginColor(ch[worst].margin); // 'green' | 'yellow' | 'red'
+  const bad = level !== 'green' ? worst : null;
+  // Round 3 help: where to fix first, and which pages have slack to trade.
+  const fixPage = bad ? (PAGES.find((p) => p.charts.includes(bad)) || PAGES.find((p) => p.who === ownerOf(bad))) : null;
+  const slack = PAGES.filter((p) => { const cs = challengeState(p, state.design); return cs.met && !cs.lean; });
+  const jump = (p) => `<button class="tab" data-act="goto" data-key="${p.key}">${p.title}</button>`;
+  const help = `${fixPage ? `<p class="hint"><b>Fix first:</b> ${CHART_LABEL[bad]} is ${level === 'red' ? 'short' : 'thin'}. ${jump(fixPage)}</p>` : ''}${slack.length ? `<p class="hint"><b>Room to trade:</b> these are over-built. Trim one to pay for the fix. ${slack.map(jump).join('')}</p>` : ''}`;
+  return `<details class="dash" open><summary>Team dashboard</summary>${help}
+    <div class="gauges">${keys.map((k) => `<span class="g ${marginColor(ch[k].margin)}">${CHART_LABEL[k]} <b>${fPct(ch[k].margin)}</b></span>`).join('')}</div>
+    ${couplingMap(state.design, partName, bad, level)}</details>`;
 }
 
 // ---------- choices: a trade table for every part ----------
@@ -139,13 +151,19 @@ const f$ = (v) => `$${R(v)}M`;
 
 // Each option shows its value on the criteria that pull against each other (the best option per
 // criterion is marked). Tapping a number picks the option and records that as the reason.
+// Pixel arrow: rows of 1..4..1 squares, pointing left or right.
+const arrow = (dir) => `<svg viewBox="0 0 4 7" width="16" height="28" class="arw" aria-hidden="true">${[1, 2, 3, 4, 3, 2, 1].map((w, y) => `<rect x="${dir < 0 ? 4 - w : 0}" y="${y}" width="${w}" height="1"/>`).join('')}</svg>`;
+
+// One box per part: arrows step through the options, and the box shows the one that is picked.
 function optionsHTML(step) {
   const t = trade(step.key, state.design); const cur = state.design[step.key];
-  return `<div class="opts">${t.options.map((o) => `
-    <div class="opt ${cur === o.id ? 'sel' : ''}">
-      <button class="opt-main" data-act="pick" data-slot="${step.key}" data-id="${o.id}"><span class="opt-name">${esc(o.name)}</span></button>
-      <div class="crits">${t.criteria.map((c) => `<div class="crit ${t.isBest(o, c) ? 'best' : ''}"><span>${c.label}</span><b>${fmtC(c, o.vals[c.id])}</b></div>`).join('')}</div>
-    </div>`).join('')}</div>`;
+  const i = Math.max(0, t.options.findIndex((o) => o.id === cur)); const o = t.options[i];
+  const btn = (dir) => `<button class="arrow" ${(dir < 0 && i === 0) || (dir > 0 && i === t.options.length - 1) ? 'disabled' : ''} data-act="cycle" data-slot="${step.key}" data-dir="${dir}" aria-label="${dir < 0 ? 'Previous' : 'Next'} ${step.label}">${arrow(dir)}</button>`;
+  return `<div class="opt sel">
+    <div class="opt-head">${btn(-1)}<div class="opt-name">${esc(o.name)}<small>${i + 1} / ${t.options.length}</small></div>${btn(1)}</div>
+    <p class="opt-blurb">${esc(o.blurb)}</p>
+    <div class="crits">${t.criteria.map((c) => `<div class="crit ${t.isBest(o, c) ? 'best' : ''}"><span>${c.label}</span><b>${fmtC(c, o.vals[c.id])}</b></div>`).join('')}</div>
+  </div>`;
 }
 
 // Picking a part sets its id and starts its sizes at the part's usual size (the sliders then resize
@@ -159,11 +177,19 @@ function setChoice(k, id, whyId) {
 }
 
 // ---------- screens ----------
+// Round 3: a tab per subsystem (and Review) to jump straight to any of them.
+function tabsHTML() {
+  if (!showAll() || !(PAGE[key()] || key() === 'review')) return '';
+  const tab = (k, label) => `<button class="tab ${key() === k ? 'on' : ''}" data-act="goto" data-key="${k}">${label}</button>`;
+  return `<div class="tabs">${PAGES.map((p) => tab(p.key, p.title)).join('')}${tab('review', 'Review')}</div>`;
+}
+
 function header() {
-  const n = state.step;
-  return `<header class="top">
-    <div class="top-row"><div class="brand">${MARK}Mission Design${DEBUG ? ' <span class="dbg">debug</span>' : ''}</div><span class="attempt">Round ${Math.min(state.attempt, MAX_ROUNDS)} of ${MAX_ROUNDS}</span></div>
-    <div class="countdown"><b>${n >= stepOf('launch') ? 'T+0' : `T−${stepOf('launch') - n}`}</b> · ${stepName(key())} <span class="role-badge">${roleBadge(key())}</span></div>
+  const n = state.step; const tabs = tabsHTML();
+  return `<header class="top${tabs ? ' tabbed' : ''}">
+    <div class="top-row"><div class="brand">${MARK}Mission Design${DEBUG ? ' <span class="dbg">debug</span>' : ''}</div><span class="rsteps" role="img" aria-label="Round ${roundNo()} of ${MAX_ROUNDS}: ${ROUNDS[roundNo() - 1].name}">${ROUNDS.map((r, i) => `<i class="${i + 1 === roundNo() ? 'on' : i + 1 < roundNo() ? 'done' : ''}">${i + 1}${i + 1 === roundNo() ? ` ${r.name}` : ''}</i>`).join('')}</span></div>
+    <div class="countdown"><b>${n >= stepOf('launch') ? 'T+0' : `T−${stepOf('launch') - n}`}</b> · ${stepName(key())}</div>
+    ${tabs}
     <i class="prog" style="width:${(100 * n) / (FLOW.length - 1)}%"></i>
   </header>`;
 }
@@ -200,6 +226,7 @@ function screenContract() {
     </button>`;
   }).join('');
   return `${header()}<main><h1>Contract board</h1>
+    <p class="lead">Pick a mission. You fly it three times: blind, then seeing one subsystem's budgets at a time, then seeing everyone's.</p>
     <div class="dests">${cards}</div>
     <button class="link" data-act="reset">Start over (new team)</button></main>${nav(!!sel)}`;
 }
@@ -209,42 +236,28 @@ const fPct = (m) => (typeof m === 'number' ? `${m < 0 ? '−' : '+'}${Math.min(9
 
 function screenReqs() {
   const rows = requirements(state.design);
-  return `${header()}<main><h1>Requirements</h1>${amendHTML()}
-    <div class="reqs">${rows.map((r) => `<div class="req"><b class="rid">${r.id}</b><div><div class="rtext">${esc(r.text)}</div><div class="rmeta">${r.owner}</div></div></div>`).join('')}</div>
+  const R = ROUNDS[roundNo() - 1];
+  return `${header()}<main><h1>Requirements</h1>
+    <div class="goal"><b>Round ${roundNo()}: ${R.name}.</b> ${R.learn}</div>
+    <div class="reqs">${rows.map((r) => `<div class="req"><b class="rid">${r.id}</b><div><div class="rtext">${esc(r.text)}</div></div></div>`).join('')}</div>
   </main>${nav(true)}`;
 }
 
 // Where an interface row's need comes from, largest first.
-const sourcesHTML = (r) => `<small>${[...r.sources].sort((a, c) => c.v - a.v).map((s) => `${LEAD[s.from].replace(' Lead', '')}: ${esc(s.text)} ${fmtU(s.v, r.unit)}`).join(' · ')}</small>`;
+const sourcesHTML = (r) => `<small>${[...r.sources].sort((a, c) => c.v - a.v).map((s) => `${esc(s.text)} ${fmtU(s.v, r.unit)}`).join(' · ')}</small>`;
 
-// "Requirements on you" and "your choices put on others", for the lead holding the phone.
+// What this subsystem must meet.
 // Attempt 1 shows what is needed; attempt 2+ adds what your design provides and the margin.
 function ifacePanel(k) {
   const who = OWNER[k]; const rows = interfaces(state.design); const live = showAll();
   const mine = incoming(rows, who);
   const row = (r) => `<div class="irow ${live ? r.status : ''}"><div class="kv"><span>${r.label}</span><b>${live && r.have != null ? `${fmtU(r.need, r.unit)} of ${fmtU(r.have, r.unit)} · ${fPct(r.margin)}` : `needs ${fmtU(r.need, r.unit)}`}</b></div>${sourcesHTML(r)}${r.note && live ? `<small>${esc(r.note)}</small>` : ''}</div>`;
-  const out = showAll() ? outgoing(rows, who) : []; // what you put on others is a round-3 view
-  const byLead = {};
-  for (const o of out) (byLead[o.row.to] = byLead[o.row.to] || []).push(`${o.row.label} ${fmtU(o.src.v, o.row.unit)} (${esc(o.src.text)})`);
-  return `<h2>Requirements on you</h2>${mine.length ? mine.map(row).join('') : '<small>Nothing yet.</small>'}
-    ${out.length ? `<h2>Your choices put on others</h2>${Object.entries(byLead).map(([to, xs]) => `<div class="irow"><div class="kv"><span>${LEAD[to]}</span></div><small>${xs.join(' · ')}</small></div>`).join('')}` : ''}`;
+  return `<h2>This page must meet</h2>${mine.length ? mine.map(row).join('') : '<small>Nothing yet.</small>'}`;
 }
 
 // ---------- one page per subsystem ----------
 // Each page is one lead's subsystem with its own mini-challenge. Silos: a lead sees their own
 // gauges and charts; cost and lift are shared; the rest waits for Review.
-
-// The contract amendment that lands from round 2.
-function amendment() {
-  const C0 = contract(); if (!state.design.changed || !C0.change) return null;
-  const p = C0.change.patch; const out = [];
-  if (p.payload && p.payload !== C0.payload) out.push(`new instrument: ${PAYLOADS.find((x) => x.id === p.payload).name}`);
-  if (p.goalGb && p.goalGb !== C0.goalGb) out.push(`science goal ${C0.goalGb} → ${p.goalGb} Gbit`);
-  if (p.deadline && p.deadline !== C0.deadline) out.push(`arrive within ${fmtYr(p.deadline)}`);
-  if (p.budget && p.budget !== C0.budget) out.push(`funding $${C0.budget}M → $${p.budget}M`);
-  return out.join(', ');
-}
-const amendHTML = () => { const t = amendment(); return t ? `<div class="notice"><b>Contract change</b>${esc(t)}</div>` : ''; };
 
 // The page's own gauges: the interface rows that land on this lead and belong to this page.
 function gaugesHTML(who, labels) {
@@ -252,7 +265,7 @@ function gaugesHTML(who, labels) {
   const live = showBudgets();
   return `<div class="gauges">${rows.map((r) => (live && r.margin != null
     ? `<span class="g ${r.status}">${r.label} <b>${fPct(r.margin)}</b></span>`
-    : `<span class="g">${r.label} <b>needs ${fmtU(r.need, r.unit)}</b></span>`)).join('')}</div>`;
+    : `<span class="g">${r.label} <b>${r.label === 'Cost' ? 'total' : 'needs'} ${fmtU(r.need, r.unit)}</b></span>`)).join('')}</div>`;
 }
 
 
@@ -264,14 +277,22 @@ function hudHTML() {
 }
 
 // The mini-challenge card: what to do, and (from round 2) whether it is met and lean.
-function challengeHTML(page, cs) {
+// This page's own gauges that are over their limit.
+const redRows = (page) => incoming(interfaces(state.design), page.who).filter((r) => page.rows.includes(r.label) && r.status === 'red').map((r) => r.label);
+
+function challengeHTML(page, cs, reds = []) {
   const m = page.minimize; const val = (v) => fmtU(v, m.unit);
-  if (!showBudgets()) return `<div class="challenge"><b>${page.name}</b> Least ${m.label}.</div>`;
+  if (!showBudgets()) return `<div class="challenge"><b>Goal: ${page.name}.</b> Use the least ${m.label}.</div>`;
+  if (cs.met && reds.length) return `<div class="challenge warn"><b>⚠ ${page.name}</b> met, but ${reds.join(' and ')} is over its limit</div>`;
   if (cs.met && cs.lean) return `<div class="challenge ok"><b>✓ ${page.name}</b> lean (${val(cs.cur.value)} ${m.label})</div>`;
   if (cs.met) return `<div class="challenge warn"><b>✓ ${page.name}</b> over-built: ${esc(cs.best.label)} saves ${val(cs.cur.value - cs.best.value)} ${m.label}</div>`;
-  if (!cs.met && !showAll()) return `<div class="challenge bad"><b>✗ ${page.name}</b> not met</div>`;
+  if (!cs.met && !showAll()) {
+    // Round 2: the other subsystems are already locked in. If nothing on this page can meet the challenge, say so and move on.
+    return cs.anyMet ? `<div class="challenge bad"><b>✗ ${page.name}</b> not met</div>`
+      : `<div class="challenge bad"><b>✗ ${page.name}</b> can't be met with the other subsystems as configured. Nothing here fixes it. Move on.</div>`;
+  }
   if (cs.anyMet) return `<div class="challenge bad"><b>✗ ${page.name}</b> not met. A part or size here would fix it</div>`;
-  return `<div class="challenge bad"><b>✗ ${page.name}</b> not met. Another lead's choice is in the way</div>`;
+  return `<div class="challenge bad"><b>✗ ${page.name}</b> not met. Another subsystem's choice is in the way</div>`;
 }
 
 // Every part is a trade study: the numbers pull against each other, and the lead records which
@@ -294,17 +315,19 @@ function slidersHTML(page) {
 // the gauges, the charts and the craft. Sliders never re-render themselves, only these do.
 function chartsHTML(page) {
   const ch = showBudgets() ? buildCharts(state.design, ESTIMATE) : null;
-  // Round 3: every budget on every page, this page's own first.
-  const keys = showAll() ? [...page.charts, ...CHART_ORDER.filter((k) => !page.charts.includes(k))] : page.charts;
-  return ch ? `<section class="graphs"><div class="chart-grid">${keys.filter((k) => ch[k]).map((k) => renderChart(ch[k])).join('')}</div></section>` : '';
+  // Round 3: this page's budgets, and all the others one tap away.
+  const grid = (ks) => `<div class="chart-grid">${ks.filter((k) => ch[k]).map((k) => renderChart(ch[k])).join('')}</div>`;
+  const rest = CHART_ORDER.filter((k) => !page.charts.includes(k));
+  return ch ? `<section class="graphs">${grid(page.charts)}${showAll() ? `<details class="picks"><summary>More budgets</summary>${grid(rest)}</details>` : ''}</section>` : '';
 }
 function refreshPage(page) {
   resetCharts();
   const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
   const hud = document.getElementById('hud'); if (hud) hud.outerHTML = hudHTML();
-  set('challenge', challengeHTML(page, challengeState(page, state.design)));
+  set('challenge', challengeHTML(page, challengeState(page, state.design), redRows(page)));
   set('gauges', gaugesHTML(page.who, page.rows));
   set('charts', chartsHTML(page));
+  set('trajmap', trajMapSVG(dest(), state.design.traj));
   set('craft', craftSVG(state.design, { screen: page.craft }));
   set('rip', rippleHTML());
   set('dash', dashHTML());
@@ -315,9 +338,10 @@ function screenPage(page) {
   const idx = PAGES.indexOf(page);
   const ctx = { D, C, b };
   return `${header()}${hudHTML()}<main>${debugBar()}
-    <div class="eyebrow"><span class="role">Subsystem ${idx + 1} of ${PAGES.length} · ${LEAD[page.who]}</span></div>
+    <div class="eyebrow"><span class="role">Subsystem ${idx + 1} of ${PAGES.length}</span></div>
     <h1>${page.title}: ${page.name}</h1>
-    <div id="challenge">${challengeHTML(page, challengeState(page, d))}</div>
+    <div id="challenge">${challengeHTML(page, challengeState(page, d), redRows(page))}</div>
+    ${page.key === 'traj' ? `<div class="craft-wrap" id="trajmap">${trajMapSVG(D, d.traj)}</div>` : ''}
     <div class="craft-wrap" id="craft">${craftSVG(d, { screen: page.craft })}</div>
     <div id="gauges">${gaugesHTML(page.who, page.rows)}</div>
     <div id="rip">${rippleHTML()}</div>
@@ -358,12 +382,12 @@ function screenReview() {
     const cs = challengeState(p, d);
     return `<div class="vrow ${cs.met ? (cs.lean ? 'green' : 'yellow') : 'red'}"><div><div>${p.title}: ${p.name}</div><small>${cs.met ? (cs.lean ? 'Met, and lean' : 'Met, but over-built') : 'Not met'} · ${LEAD[p.who]}</small></div></div>`;
   }).join('');
-  const ifRow = (r) => `<div class="vrow ${r.status}"><div><div>${r.label} <span class="rmeta">→ ${LEAD[r.to]}</span></div><small>${fmtU(r.need, r.unit)} needed of ${fmtU(r.have, r.unit)} provided</small>${sourcesHTML(r)}</div><span class="r-m">${fPct(r.margin)}</span></div>`;
+  const ifRow = (r) => `<div class="vrow ${r.status}"><div><div>${r.label}</div><small>${fmtU(r.need, r.unit)} needed of ${fmtU(r.have, r.unit)} provided</small>${sourcesHTML(r)}</div><span class="r-m">${fPct(r.margin)}</span></div>`;
   return `${header()}<main><h1>Design review</h1>
     <div class="craft-wrap">${craftSVG(d)}</div>
     <h2>System requirements</h2>
     <div class="summary">${reds ? `<b class="red-t">${reds} failing</b> · ` : ''}${yellows ? `<b class="yellow-t">${yellows} thin</b> · ` : ''}${!reds && !yellows ? '<b class="green-t">All verified</b>' : ''}</div>
-    <div class="verify">${reqs.map((r) => `<div class="vrow ${r.status}"><b class="rid">${r.id}</b><div><div>${esc(r.text)}</div><small>${r.owner} · ${r.by}</small></div><span class="r-m">${fPct(r.margin)}</span></div>`).join('')}</div>
+    <div class="verify">${reqs.map((r) => `<div class="vrow ${r.status}"><b class="rid">${r.id}</b><div><div>${esc(r.text)}</div><small>${r.by}</small></div><span class="r-m">${fPct(r.margin)}</span></div>`).join('')}</div>
     <h2>Interface requirements</h2>
     <div class="verify">${ifs.map(ifRow).join('')}</div>
     <details class="picks"><summary>All budget graphs</summary><div class="chart-grid">${keys.map((k) => renderChart(ch[k])).join('')}</div></details>
@@ -376,7 +400,7 @@ function screenReview() {
 }
 
 function historyHTML() {
-  return `<div class="history"><b>Rounds</b>${state.history.map((h) => `<div class="h-row"><span>Round ${h.attempt}</span><span class="stars" aria-label="${h.stars} of 3 stars">${starsOf(h.stars)}</span><span>${h.score} pts</span><span class="code">${h.code}</span></div>`).join('')}</div>`;
+  return `<div class="history"><b>Rounds</b>${state.history.map((h) => `<div class="h-row"><span>${h.attempt} · ${ROUNDS[h.attempt - 1].name}</span><span class="stars" aria-label="${h.stars} of 3 stars">${starsOf(h.stars)}</span><span>${h.score} pts</span><span class="code">${h.code}</span></div>`).join('')}</div>`;
 }
 const starsOf = (n) => '★'.repeat(n) + '☆'.repeat(3 - n);
 const tierName = (o) => ({ none: 'No mission', min: 'Minimum', full: 'Full success' }[o]);
@@ -428,7 +452,7 @@ function startLaunch() {
     if (e.kind === 'arrival') continue;
     beats.push({ ms: tOf(e.t, phase), cls: e.kind === 'random' ? 'info' : 'warn', text: `${e.kind === 'random' ? 'Event' : e.kind === 'flyby' ? 'Flyby' : 'Hazard'}: ${e.text}`, t: e.t });
   }
-  if (!f || f.partial || (f.t >= cruise && f.phase === 'ops')) beats.push({ ms: tOf(cruise, 'arrival'), cls: 'ok', text: `Arrival burn: ${R(b.dvAvail)} of ${R(b.dvReq)} m/s. In position at ${b.D.name}.` });
+  if (!f || f.partial || (f.t >= cruise && f.phase === 'ops')) beats.push({ ms: tOf(cruise, 'arrival'), cls: 'ok', text: `Arrival burn: needed ${R(b.dvReq)} m/s, had ${R(b.dvAvail)} m/s. In position at ${b.D.name}.` });
   if (f && f.mode !== 'launcher') beats.push({ ms: f.partial ? totalMs : tOf(f.t, f.phase), cls: f.partial ? 'warn' : 'fail', text: f.text, fail: !f.partial });
   if (!f) beats.push({ ms: totalMs, cls: 'ok', text: `Mission complete: ${fmtGb(res.scienceGb)} returned.` });
   beats.sort((a, b2) => a.ms - b2.ms);
@@ -490,14 +514,14 @@ function showResult(res) {
   const first = state.attempt === 1; const last = state.attempt >= MAX_ROUNDS;
   const f = res.failure;
   // Stars: one for arriving and operating, two for the science goal, three for doing it within 10% of par.
-  const parCost = par(d.contract, d.changed);
+  const parCost = par(d.contract);
   // Over budget fails R4: a round-1 bailout buys the flight, not the stars.
   const over = res.cost > res.b.budget;
   let stars = res.outcome === 'full' ? (res.cost <= parCost * 1.1 ? 3 : 2) : res.outcome === 'min' ? 1 : 0;
   if (over) stars = Math.min(stars, 1);
   const rq = f ? requirements(d).find((r) => r.id === reqFor(f)) : null;
   if (!state.history.find((h) => h.attempt === state.attempt)) {
-    state.history.push({ attempt: state.attempt, name: C.name, outcome: res.outcome, stars, score: res.score, code, cost: R(res.cost), req: rq ? `${rq.id} (${rq.text})` : over ? 'R4 (afford it)' : null });
+    state.history.push({ attempt: state.attempt, name: C.name, outcome: res.outcome, stars, score: res.score, code, cost: R(res.cost), req: rq ? `${rq.id} (${rq.text})` : over ? 'R4 (afford it)' : null, why: f ? f.text : over ? `Over budget by ${f$(res.cost - res.b.budget)}.` : null });
     save();
   }
   const chains = explain(d, res);
@@ -536,7 +560,7 @@ function showResult(res) {
       : `<section class="anomaly good"><h2>Mission report</h2><p>${closest ? `Closest call: <b>${closest}</b>` : 'All constraints held'}</p></section>`}
     ${historyHTML()}
     <div class="end-actions">
-      ${last ? '<button class="btn primary" data-act="finish">Mission debrief</button>' : `<button class="btn primary" data-act="redesign">Round ${state.attempt + 1}: ${first ? 'the contract changes' : 'final attempt'}</button>`}
+      ${last ? '<button class="btn primary" data-act="finish">Mission debrief</button>' : `<button class="btn primary" data-act="redesign">Round ${state.attempt + 1}</button>`}
     </div>`;
   document.querySelector('.ff')?.remove();
   if (!DEBUG) document.getElementById('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -557,6 +581,22 @@ function closestCall(b) {
   return m ? `${m[0]} margin ${R(m[1] * 100)}%` : null;
 }
 
+// Between rounds: how the last round went, the takeaway, and what changes next.
+// Between rounds: how the last round went, the takeaway, and what changes next.
+function takeaway(done) {
+  if (done === 1) return { take: 'Budget before you select parts.', more: 'Every part you pick loads a budget. Set the budgets first, then choose parts that fit them.', next: "Round 2: you see one subsystem's budgets at a time." };
+  return { take: 'Everything is coupled.', more: 'A choice on one page moves budgets on others. A fix on one page can break another.', next: 'Round 3: the whole team sees every budget and works together.' };
+}
+function screenTransition() {
+  const done = state.attempt - 1; const h = state.history.find((x) => x.attempt === done); const T = takeaway(done);
+  return `<header class="top plain"><div class="top-row"><div class="brand">${MARK}Mission Design</div><span class="attempt">Between rounds</span></div></header><main class="transition"><h1>Round ${done} done</h1>
+    ${h ? `<div class="outcome ${h.outcome}"><div class="o-stars" role="img" aria-label="${h.stars} of 3 stars">${starsOf(h.stars)}</div><div class="o-tier">${tierName(h.outcome)}${h.req ? ` · failed ${esc(h.req)}` : ''}</div></div>` : ''}
+    <h2>Takeaway</h2><p class="take big">${T.take}</p><p class="take">${T.more}</p>
+    ${h && h.why ? `<h2>What happened</h2><p class="take">${esc(h.why)}</p>` : ''}
+    <h2>Next</h2><p class="take">${T.next}</p>
+  </main><nav class="bottom"><span></span><button class="btn primary" data-act="begin">Start round ${state.attempt}</button></nav>`;
+}
+
 // ---------- debrief ----------
 function screenDebrief() {
   const hs = state.history;
@@ -573,6 +613,7 @@ function screenDebrief() {
         <div><span>Team code</span><b class="code">${best.code}</b></div>
       </div>
     </div>
+    <h2>Takeaway</h2><p class="take">When everyone sees every budget, the team can fix coupled problems together.</p>
     ${historyHTML()}
     <div class="end-actions"><button class="btn primary" data-act="newgame">New mission</button></div>
   </main>`;
@@ -584,6 +625,7 @@ const SCREENS = { contract: screenContract, reqs: screenReqs, ...Object.fromEntr
 function render() {
   if (anim) { clearTimeout(anim); anim = null; }
   resetCharts();
+  if (state.transition) { $app.innerHTML = screenTransition(); return; }
   const k = key();
   $app.innerHTML = SCREENS[k]();
   if (k === 'launch') startLaunch();
@@ -603,7 +645,7 @@ function autoPick(mode) {
   if (!state.design.contract) return;
   if (mode === 'good') {
     // The stored par design: the cheapest full success (par.js, checked by the balance test).
-    const best = parDesign(state.design.contract, state.design.changed); if (best) state.design = { ...best, why: {} };
+    const best = parDesign(state.design.contract); if (best) state.design = { ...best, why: {} };
   } else {
     const rng = mulberry32(Date.now() & 0xffffffff);
     for (const s of STEPS) { const o = s.list[Math.floor(rng() * s.list.length)]; state.design[s.key] = o.id; Object.assign(state.design, o.def || {}); }
@@ -620,6 +662,15 @@ $app.addEventListener('click', (e) => {
   const keepScroll = () => { const y = window.scrollY; render(); window.scrollTo(0, y); };
   if (act === 'contract') {
     state.design.contract = el.dataset.id; save(); render();
+  } else if (act === 'cycle') {
+    const slot = el.dataset.slot; const ids = trade(slot, state.design).options.map((o) => o.id);
+    const j = ids.indexOf(state.design[slot]) + +el.dataset.dir; if (j < 0 || j >= ids.length) return;
+    const id = ids[j];
+    const before = showAll() ? margins() : null;
+    setChoice(slot, id);
+    ripple = computeRipple(before, showAll() ? margins() : null);
+    if (ripple) ripple.who = OWNER[slot];
+    save(); keepScroll();
   } else if (act === 'pick') {
     const before = showAll() ? margins() : null;
     setChoice(el.dataset.slot, el.dataset.id, el.dataset.why);
@@ -630,8 +681,10 @@ $app.addEventListener('click', (e) => {
     speed = speed === 1 ? 2 : 1;
     el.setAttribute('aria-pressed', String(speed === 2));
   } else if (act === 'next') go(Math.min(FLOW.length - 1, state.step + 1));
+  else if (act === 'goto') go(stepOf(el.dataset.key));
   else if (act === 'back') { if (canGoBack()) go(Math.max(0, state.step - 1)); }
-  else if (act === 'redesign') { state.attempt += 1; state.design.changed = true; state.design.why = {}; go(stepOf('reqs')); } // requirements changed: re-confirm every trade
+  else if (act === 'redesign') { state.attempt += 1; state.design.why = {}; state.transition = true; go(stepOf('reqs')); }
+  else if (act === 'begin') { state.transition = false; save(); render(); window.scrollTo(0, 0); }
   else if (act === 'finish') go(stepOf('debrief'));
   else if (act === 'newgame') { state = { ...fresh(), seed: state.seed }; save(); render(); window.scrollTo(0, 0); }
   else if (act === 'reset') {

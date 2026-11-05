@@ -234,7 +234,7 @@ export function renderChart(spec) {
     ${legend}${body}${spec.note ? `<p class="c-cap">${spec.note.replace(/\.$/, '')}</p>` : ''}</figure>`;
 }
 
-const W = 340; const H = 210; const L = 46; const RM = 14; const T = 14; const B = 44;
+const W = 340; const H = 226; const L = 46; const RM = 14; const T = 14; const B = 60;
 
 function lineSVG(spec) {
   const id = `c${uid++}`; REG.set(id, spec);
@@ -254,8 +254,8 @@ function lineSVG(spec) {
   if (spec.cruise > 0 && spec.cruise < spec.xMax) {
     g.push(`<rect x="${L}" y="${T}" width="${x(spec.cruise) - L}" height="${ph}" class="band"/>`);
     const w1 = x(spec.cruise) - L; const w2 = L + pw - x(spec.cruise);
-    if (w1 > 36) g.push(`<text x="${L + w1 / 2}" y="${H - 5}" class="phase" text-anchor="middle">trip</text>`);
-    if (w2 > 50) g.push(`<text x="${x(spec.cruise) + w2 / 2}" y="${H - 5}" class="phase" text-anchor="middle">at ${spec.dest}</text>`);
+    if (w1 > 36) g.push(`<text x="${L + w1 / 2}" y="${baseY + 35}" class="phase" text-anchor="middle">trip</text>`);
+    if (w2 > 50) g.push(`<text x="${x(spec.cruise) + w2 / 2}" y="${baseY + 35}" class="phase" text-anchor="middle">at ${spec.dest}</text>`);
   }
   // danger zones above upper limits
   for (const l of spec.limits || []) {
@@ -265,11 +265,11 @@ function lineSVG(spec) {
   g.push(`<line x1="${L}" x2="${L + pw}" y1="${baseY}" y2="${baseY}" class="axis"/>`);
   g.push(`<text x="${L - 6}" y="${baseY + 4}" class="ytick">0</text>`);
   g.push(`<text x="${L - 6}" y="${T + 4}" class="ytick">${tickFmt(yMax)}</text>`);
-  g.push(`<text x="${L - 6}" y="${T + 18}" class="yunit">${spec.unit}</text>`);
+  g.push(`<text x="${L - 6}" y="${T + 22}" class="yunit">${spec.unit}</text>`);
   const xm = spec.xMax;
   const step = spec.xUnit === 'day' ? 2 : span <= 1.5 ? 0.25 : span <= 4 ? 1 : span <= 12 ? 2 : 5;
   for (let k = 0; k * step <= span + 1e-9; k++) g.push(`<text x="${x(x0 + k * step)}" y="${baseY + 16}" class="xtick">${+(k * step).toFixed(2)}</text>`);
-  g.push(`<text x="${L + pw}" y="${baseY + 30}" class="phase" text-anchor="end">${spec.xLabel || (spec.xUnit === 'day' ? 'days' : spec.xUnit === 'hr' ? 'hours' : 'years')}</text>`);
+  g.push(`<text x="${L + pw}" y="${baseY + 52}" class="phase" text-anchor="end">${spec.xLabel || (spec.xUnit === 'day' ? 'days' : spec.xUnit === 'hr' ? 'hours' : 'years')}</text>`);
 
   g.push(`<clipPath id="${id}cp"><rect x="${L}" y="${T - 2}" width="${pw}" height="${ph + 6}"/></clipPath><g clip-path="url(#${id}cp)">`);
   for (const l of spec.limits || []) g.push(`<line x1="${L}" x2="${x(l.x1 != null ? l.x1 : xm)}" y1="${y(l.y)}" y2="${y(l.y)}" class="limit"/>`);
@@ -305,8 +305,8 @@ function barsSVG(spec) {
   const g = [];
   rows.forEach((r, i) => {
     const yy = top + i * rowH; const bad = r.life < r.need;
-    g.push(`<text x="${left - 8}" y="${yy + 19}" class="ytick">${r.name}</text>`);
-    g.push(`<rect x="${left}" y="${yy + 6}" width="${Math.max(3, x(r.life) - left)}" height="16" rx="3" style="fill:${bad ? 'var(--red)' : BLUE}"/>`);
+    g.push(`<text x="${left - 8}" y="${yy + 19}" class="ytick">${r.name.length > 19 ? `${r.name.slice(0, 18)}…` : r.name}</text>`);
+    g.push(`<rect x="${left}" y="${yy + 6}" width="${Math.max(3, x(r.life) - left)}" height="16" rx="0" style="fill:${bad ? 'var(--red)' : BLUE}"/>`);
     g.push(`<line x1="${x(r.need)}" x2="${x(r.need)}" y1="${yy + 1}" y2="${yy + 27}" class="needline"/>`);
     if (bad) {
       const tx = x(r.life) + 6;
@@ -325,13 +325,13 @@ function timelineSVG(spec) {
   const x = (t) => L0 + (pw * Math.min(t, xMax)) / xMax;
   const g = [];
   const late = cruise > deadline;
-  g.push(`<rect x="${L0}" y="40" width="${Math.max(3, x(late ? deadline : cruise) - L0)}" height="18" rx="3" style="fill:${BLUE}"/>`);
-  if (late) g.push(`<rect x="${x(deadline)}" y="40" width="${x(cruise) - x(deadline)}" height="18" rx="3" style="fill:var(--red)"/>`);
+  g.push(`<rect x="${L0}" y="40" width="${Math.max(3, x(late ? deadline : cruise) - L0)}" height="18" rx="0" style="fill:${BLUE}"/>`);
+  if (late) g.push(`<rect x="${x(deadline)}" y="40" width="${x(cruise) - x(deadline)}" height="18" rx="0" style="fill:var(--red)"/>`);
   g.push(`<line x1="${x(deadline)}" x2="${x(deadline)}" y1="30" y2="68" class="needline"/>`);
   g.push(`<text x="${x(deadline)}" y="22" class="limlbl" text-anchor="${x(deadline) > W * 0.6 ? 'end' : 'start'}">Deadline: ${fmtYr(deadline)}</text>`);
   g.push(`<line x1="${L0}" x2="${L0 + pw}" y1="68" y2="68" class="axis"/>`);
-  g.push(`<text x="${L0}" y="84" class="xtick" text-anchor="start">launch</text>`);
-  g.push(`<text x="${x(cruise)}" y="84" class="${late ? 'faillbl' : 'xtick'}" text-anchor="${x(cruise) > W - 70 ? 'end' : 'middle'}">arrive ${fmtYr(cruise)}</text>`);
+  g.push(`<text x="${L0}" y="84" class="xtick" style="text-anchor:start">launch</text>`);
+  g.push(`<text x="${x(cruise)}" y="84" class="${late ? 'faillbl' : 'xtick'}" style="text-anchor:${x(cruise) > W - 70 ? 'end' : 'middle'}">arrive ${fmtYr(cruise)}</text>`);
   return `<div class="plot"><svg viewBox="0 0 ${W} ${h}" role="img" aria-label="${spec.verdict}">${g.join('')}</svg></div>`;
 }
 

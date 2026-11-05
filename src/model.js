@@ -64,9 +64,7 @@ function tankPart(d) {
 }
 
 export function parts(d) {
-  // From round 2 the contract is amended (d.changed): its patch overrides deadline, funding or goal.
-  const C0 = byId(CONTRACTS, d.contract);
-  const C = C0 && d.changed && C0.change ? { ...C0, ...C0.change.patch } : C0;
+  const C = byId(CONTRACTS, d.contract);
   const D = C ? byId(DESTINATIONS, C.dest) : null;
   return {
     C, D,
@@ -704,11 +702,11 @@ export function cheapestFull(contractId, opts = NOMINAL, changed = false) {
 
 // Par cost and par design: the cheapest full success. Precomputed (par.js), because searching the
 // whole design space takes seconds; the balance test fails if par.js is out of date.
-export function par(contractId, changed = false) {
-  const e = PAR[contractId]; const x = e && (changed ? e.amended : e.base);
+export function par(contractId) {
+  const x = PAR[contractId] && PAR[contractId].base;
   return x ? x.cost : null;
 }
-export function parDesign(contractId, changed = false) {
-  const e = PAR[contractId]; const x = e && (changed ? e.amended : e.base);
+export function parDesign(contractId) {
+  const x = PAR[contractId] && PAR[contractId].base;
   return x ? { ...x.design } : null;
 }

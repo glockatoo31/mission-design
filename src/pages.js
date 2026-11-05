@@ -17,9 +17,9 @@ const partName = (k, id) => list(k).find((x) => x.id === id).name;
 
 // pass: the margin that must be >= 0. minimize: what to keep as small as possible.
 // rows: the interface rows (gauges) that belong to this page. knobs: the sliders on the page.
-export const PAGES = [
+const RAW_PAGES = [
   {
-    key: 'comms', who: 'comms', title: 'Communications', name: 'Close the link', steps: ['comms'], craft: 'comms',
+    key: 'comms', who: 'sp', title: 'Communications', name: 'Close the link', steps: ['comms'], craft: 'comms',
     charts: ['data'], rows: ['Data'], knobs: () => ['dish', 'txPower'],
     pass: (M) => M.data, minimize: { label: 'power draw', unit: 'W', value: (b) => b.P.comms.powerW },
     brief: ({ D, C }) => `Send ${C.goalGb} Gbit home from ${D.name}, ${D.earthAU} AU from Earth. Use as little power as you can.`,
@@ -28,7 +28,7 @@ export const PAGES = [
     describe: (p) => `${partName('comms', p.comms)}, ${p.dish} m, ${p.txPower} W`,
   },
   {
-    key: 'traj', who: 'prop', title: 'Trajectory', name: 'Make the window', steps: ['traj'], craft: 'traj',
+    key: 'traj', who: 'ms', title: 'Trajectory', name: 'Make the window', steps: ['traj'], craft: 'traj',
     charts: ['time'], rows: ['Schedule', 'Burn'], knobs: () => [],
     pass: (M) => M.time, minimize: { label: 'burn', unit: 'm/s', value: (b) => b.tr.dv },
     brief: ({ C }) => `Arrive within ${fmtYr(C.deadline)}. Take the route with the smallest burn that still gets there in time.`,
@@ -37,7 +37,7 @@ export const PAGES = [
     describe: (p, d, D) => (p.traj === 'assist' ? `Assist: ${D.traj.assist.label}` : 'Direct'),
   },
   {
-    key: 'prop', who: 'prop', title: 'Propulsion', name: 'Make the burn', steps: ['engine', 'tank'], craft: 'engine',
+    key: 'prop', who: 'ms', title: 'Propulsion', name: 'Make the burn', steps: ['engine', 'tank'], craft: 'engine',
     charts: ['dv'], rows: ['Burn', 'Ion burn power'], knobs: () => ['fuel'],
     pass: (M) => M.dv, minimize: { label: 'propulsion mass', unit: 'kg', value: (b) => b.P.engine.mass + b.P.tank.mass + b.P.tank.prop },
     brief: ({ b }) => `Deliver the ${Math.round(b.dvReq)} m/s the arrival needs: the burn plus a trajectory-correction allowance. Use the lightest engine, tank and fuel that do it.`,
@@ -46,7 +46,7 @@ export const PAGES = [
     describe: (p) => `${partName('engine', p.engine)} + ${partName('tank', p.tank)}, ${p.fuel} kg`,
   },
   {
-    key: 'thermal', who: 'pt', title: 'Thermal', name: 'Stay in range', steps: ['thermal'], craft: 'thermal',
+    key: 'thermal', who: 'sp', title: 'Thermal', name: 'Stay in range', steps: ['thermal'], craft: 'thermal',
     charts: ['thermal', 'rad'], rows: ['Heat', 'Venus flyby', 'Radiation'], knobs: () => ['radiator', 'shield'],
     pass: (M) => min(M.thermal, M.rad), minimize: { label: 'mass', unit: 'kg', value: (b) => b.P.thermal.mass },
     brief: ({ D }) => `Keep the spacecraft inside its limits at ${D.name}: ${D.thermalLabel.toLowerCase()}, with ${D.opsDosePerYr} krad of radiation a year there. Use the lightest thermal system that does it.`,
@@ -55,8 +55,8 @@ export const PAGES = [
     describe: (p) => `${partName('thermal', p.thermal)}, ${p.radiator} m² radiators, ${p.shield} cm shielding`,
   },
   {
-    key: 'power', who: 'pt', title: 'Power', name: 'Keep the lights on', steps: ['power'], craft: 'power',
-    charts: ['power', 'night'], rows: ['Power', 'Dark period', 'Part life'],
+    key: 'power', who: 'sp', title: 'Power', name: 'Keep the lights on', steps: ['power'], craft: 'power',
+    charts: ['power', 'night'], rows: ['Power', 'Storm power', 'Dark period', 'Part life'],
     knobs: (d) => { const pw = list('power').find((p) => p.id === d.power); return [pw && pw.kind === 'rtg' ? 'rtgUnits' : 'solarArea', 'battery']; },
     pass: (M) => min(M.power, M.night), minimize: { label: 'mass', unit: 'kg', value: (b) => b.P.power.mass },
     brief: ({ D }) => `Supply every load at ${D.name} for the whole mission, even through ${HAZARD[D.id]}. Use the lightest power system that does it.`,
@@ -69,7 +69,7 @@ export const PAGES = [
     describe: (p) => (p.solarArea ? `${partName('power', p.power)}, ${p.solarArea} m²` : `${p.rtgUnits} × ${partName('power', p.power)}`),
   },
   {
-    key: 'rocket', who: 'launch', title: 'Rocket', name: 'Lift it', steps: ['launcher'], craft: 'launcher',
+    key: 'rocket', who: 'ms', title: 'Rocket', name: 'Lift it', steps: ['launcher'], craft: 'launcher',
     charts: ['mass', 'cost'], rows: ['Lift', 'Cost'], knobs: () => [],
     pass: (M) => M.mass, minimize: { label: 'cost', unit: '$M', value: (b) => b.P.launcher.cost },
     brief: ({ b }) => `Lift the finished spacecraft (${Math.round(b.wet)} kg). Use the cheapest rocket that does it.`,
@@ -78,6 +78,7 @@ export const PAGES = [
     describe: (p) => partName('launcher', p.launcher),
   },
 ];
+export const PAGES = ['comms', 'thermal', 'power', 'traj', 'prop', 'rocket'].map((k) => RAW_PAGES.find((p) => p.key === k));
 
 // The sliders on a page for the part that is currently chosen: key, label, unit, range, step.
 export function knobsFor(page, d) {

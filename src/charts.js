@@ -3,7 +3,7 @@
 //   orange line = the limit or the need
 //   red shading / red dot = where it breaks
 // A one-line verdict sits above each graph so nobody has to decode it.
-import { G0 } from './data.js';
+import { G0, BATTERY_LIFE } from './data.js';
 import {
   budgets, budgetMargins, marginColor, heatAt,  doseAt, powerAt, needAt, ESTIMATE, fmtYr, fmtGb, STORM_YEARS,
 } from './model.js';
@@ -16,7 +16,7 @@ const ORANGE = '#c0802a';
 const R = Math.round;
 
 export const CHART_ORDER = ['power', 'thermal', 'rad', 'data', 'time', 'cost', 'mass', 'dv', 'life', 'night'];
-export const CHART_LABEL = { ...BUDGET_LABEL, night: 'Night battery' };
+export const CHART_LABEL = { ...BUDGET_LABEL, night: 'Battery in the dark' };
 
 // Which graph explains each failure mode.
 export function chartForFailure(f, b) {
@@ -154,7 +154,7 @@ export function buildCharts(d, opts = ESTIMATE, failure = null) {
     const after = b.dvAvail >= b.dvReq ? b.wet / Math.exp(b.dvReq / (isp * G0)) : b.dry;
     const curve = (wet, aft) => [[0, wet], [cruise - eps, wet], [cruise, aft], [end, aft]];
     const series = [{ ...have(curve(b.wet, after)), name: 'Real hardware' }];
-    if (opts.growth > 0) {
+    if (b.growth > 0) {
       const e = budgets(d, ESTIMATE);
       series.unshift({ name: 'On paper', color: '#9aa5c8', dash: true, pts: curve(e.wet, e.dvAvail >= e.dvReq ? e.wet / Math.exp(e.dvReq / (P.engine.isp * G0)) : e.dry) });
     }
@@ -189,19 +189,21 @@ export function buildCharts(d, opts = ESTIMATE, failure = null) {
     note: 'Bar = how long the part lasts. Line = how long it must work.',
   };
 
-  // Moon: battery through the 14-day night.
-  if (D.id === 'moon') {
-    const drain = b.nightNeedWh / D.nightHours;
-    const days = D.nightHours / 24;
-    const pts = sample((x) => Math.max(0, b.batteryWh - drain * x * 24), 0, days, [], 60);
-    const empty = drain > 0 && b.batteryWh < b.nightNeedWh ? b.batteryWh / drain / 24 : null;
-    const fail = empty != null ? { t: empty, y: 0, label: `Dead on day ${Math.ceil(empty)}` } : null;
+  // Nights and eclipses: the battery carries the load, down to its depth-of-discharge limit.
+  if (D.dark) {
+    const dk = D.dark; const long = dk.hours >= 72; const span = long ? dk.hours / 24 : dk.hours; const perUnit = long ? 24 : 1;
+    const drain = b.nightNeedWh / dk.hours; // Wh per hour
+    const floor = b.batteryWh * (1 - BATTERY_LIFE.dodMax);
+    const pts = sample((x) => b.batteryWh - drain * x * perUnit, 0, span, [], 60);
+    const flat = drain > 0 && b.nightNeedWh > b.usableWh ? (b.batteryWh - floor) / drain / perUnit : null;
+    const label = flat == null ? '' : (long ? `Runs flat on day ${Math.ceil(flat)}` : `Runs flat after ${flat.toFixed(1)} h`);
+    const fail = flat != null ? { t: flat, y: floor, label } : null;
     out.night = {
-      key: 'night', title: 'Night battery', unit: 'kWh', xMax: days, xUnit: 'day', fmt: (v) => `${(v / 1000).toFixed(1)} kWh`,
+      key: 'night', title: 'Battery in the dark', unit: 'kWh', xMax: span, xUnit: long ? 'day' : 'hr', fmt: (v) => `${(v / 1000).toFixed(1)} kWh`,
       series: [{ ...have(pts), name: 'Battery charge' }],
-      limits: [{ y: 0, label: 'Empty', dir: 'below' }],
-      fail, ...judge(b.hazardMargin, { ok: 'Battery lasts the night', thin: 'Battery barely lasts the night', bad: () => `Battery dies on day ${Math.ceil(empty)}` }, fail),
-      note: `${R(b.nightLoad)} W of heaters and bus for 14 days with no sun`,
+      limits: [{ y: floor, label: `Depth limit (${Math.round(BATTERY_LIFE.dodMax * 100)}%)`, dir: 'below' }],
+      fail, ...judge(b.darkMargin, { ok: 'Battery carries the dark', thin: 'Battery only just carries the dark', bad: () => label }, fail),
+      note: `${R(b.nightLoad)} W through the ${dk.label.toLowerCase()}. ${R(b.batteryCycles)} cycles of life at ${R(b.dod * 100)}% depth`,
     };
   }
   return out;
@@ -267,7 +269,7 @@ function lineSVG(spec) {
   const xm = spec.xMax;
   const step = spec.xUnit === 'day' ? 2 : span <= 1.5 ? 0.25 : span <= 4 ? 1 : span <= 12 ? 2 : 5;
   for (let k = 0; k * step <= span + 1e-9; k++) g.push(`<text x="${x(x0 + k * step)}" y="${baseY + 16}" class="xtick">${+(k * step).toFixed(2)}</text>`);
-  g.push(`<text x="${L + pw}" y="${baseY + 30}" class="phase" text-anchor="end">${spec.xLabel || (spec.xUnit === 'day' ? 'days' : 'years')}</text>`);
+  g.push(`<text x="${L + pw}" y="${baseY + 30}" class="phase" text-anchor="end">${spec.xLabel || (spec.xUnit === 'day' ? 'days' : spec.xUnit === 'hr' ? 'hours' : 'years')}</text>`);
 
   g.push(`<clipPath id="${id}cp"><rect x="${L}" y="${T - 2}" width="${pw}" height="${ph + 6}"/></clipPath><g clip-path="url(#${id}cp)">`);
   for (const l of spec.limits || []) g.push(`<line x1="${L}" x2="${x(l.x1 != null ? l.x1 : xm)}" y1="${y(l.y)}" y2="${y(l.y)}" class="limit"/>`);
@@ -350,7 +352,7 @@ export function attachHover(root) {
     }).join('');
     const tip = svg.parentElement.querySelector('.tip');
     tip.hidden = false;
-    tip.innerHTML = `<div class="tip-t">${spec.xUnit === 'day' ? `Day ${t.toFixed(1)}` : spec.xMin ? `${(t - x0).toFixed(2)} yr at ${spec.dest}` : `Year ${t.toFixed(t < 1 ? 2 : 1)}${spec.cruise != null && t < spec.cruise ? ' · trip' : ''}`}</div>${vals}`;
+    tip.innerHTML = `<div class="tip-t">${spec.xUnit === 'day' ? `Day ${t.toFixed(1)}` : spec.xUnit === 'hr' ? `Hour ${t.toFixed(1)}` : spec.xMin ? `${(t - x0).toFixed(2)} yr at ${spec.dest}` : `Year ${t.toFixed(t < 1 ? 2 : 1)}${spec.cruise != null && t < spec.cruise ? ' · trip' : ''}`}</div>${vals}`;
     const frac = (p.x - l) / pw;
     tip.style.left = frac > 0.5 ? '' : `${(p.x / W) * 100 + 3}%`;
     tip.style.right = frac > 0.5 ? `${100 - (p.x / W) * 100 + 3}%` : '';

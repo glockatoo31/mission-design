@@ -35,9 +35,7 @@ Three rounds, about five minutes each.
    much of it shows up. A cheap, new part has a hidden cost.
 
    Every part is also a small **trade study**: each option shows its numbers at its usual size on criteria that
-   pull against each other, including its risk (the best per criterion is green), and the lead taps the number
-   they are optimising for. That picks the option and records the reason. A page's Next stays locked until its
-   parts each have one. From round 2 a page shows live, as you drag the sliders, whether its challenge is
+   pull against each other, including its risk (the best per criterion is green), and the lead taps a part to pick it. From round 2 a page shows live, as you drag the sliders, whether its challenge is
    **met and lean**, **met but over-built** (and which part and size would do it with less), **not met**, or
    **not met and nothing on the page can fix it** (another lead's choice is in the way).
 4. **Review**, then **launch** (about 30 seconds, with a 2x button from round 2).
@@ -168,7 +166,7 @@ Open the URL on 3-4 phones (or tabs, at least one real phone):
 - [ ] A failing round names the requirement, the owner, and the biggest demands behind it.
 - [ ] Round 2: the requirements screen shows a "Contract amendment" banner; each page now shows its challenge status (met and lean, over-built, not met), its own gauges and charts, and a Cost/Lift bar; the 2x button works on the launch.
 - [ ] Choosing Twin RTG (or a large dish) shows a "Change notice" naming another lead.
-- [ ] Review shows the decision record (yellow when another option was better on the stated reason); round 2+ also shows system requirements, interface requirements and "All budget graphs", and over-budget designs cannot launch.
+- [ ] Review shows the decision record; round 2+ also shows system requirements, interface requirements and "All budget graphs", and over-budget designs cannot launch.
 - [ ] Round 2 clears every reason and asks the team to re-confirm each trade. A failure's anomaly report includes "The trade behind it".
 - [ ] Result shows stars, score, "Your Cost | Target Par Cost" and a team code; round 3 ends with "Mission debrief".
 - [ ] **Seed test:** `?seed=5` on two phones, build the same design, launch: same outcome, event and team code.

@@ -140,11 +140,11 @@ const f$ = (v) => `$${R(v)}M`;
 // Each option shows its value on the criteria that pull against each other (the best option per
 // criterion is marked). Tapping a number picks the option and records that as the reason.
 function optionsHTML(step) {
-  const t = trade(step.key, state.design); const cur = state.design[step.key]; const why = state.design.why[step.key];
+  const t = trade(step.key, state.design); const cur = state.design[step.key];
   return `<div class="opts">${t.options.map((o) => `
     <div class="opt ${cur === o.id ? 'sel' : ''}">
       <button class="opt-main" data-act="pick" data-slot="${step.key}" data-id="${o.id}"><span class="opt-name">${esc(o.name)}</span><span class="opt-blurb">${esc(o.blurb)}</span></button>
-      <div class="crits">${t.criteria.map((c) => `<button class="crit ${t.isBest(o, c) ? 'best' : ''} ${cur === o.id && why === c.id ? 'why' : ''}" data-act="pick" data-slot="${step.key}" data-id="${o.id}" data-why="${c.id}"><span>${c.label}</span><b>${fmtC(c, o.vals[c.id])}</b></button>`).join('')}</div>
+      <div class="crits">${t.criteria.map((c) => `<div class="crit ${t.isBest(o, c) ? 'best' : ''}"><span>${c.label}</span><b>${fmtC(c, o.vals[c.id])}</b></div>`).join('')}</div>
     </div>`).join('')}</div>`;
 }
 
@@ -258,10 +258,6 @@ function gaugesHTML(who, labels) {
     : `<span class="g">${r.label} <b>needs ${fmtU(r.need, r.unit)}</b></span>`)).join('')}</div>`;
 }
 
-const reasonLabel = (k) => {
-  const c = trade(k, state.design).criteria.find((x) => x.id === state.design.why[k]);
-  return c ? `<small class="whylbl ok">for ${c.label}</small>` : '<small class="whylbl">tap the number you are optimising for</small>';
-};
 
 function hudHTML() {
   if (!showBudgets()) return '<div class="hud" id="hud"><span>Round 1 flies blind. Pick, then launch.</span></div>';
@@ -319,7 +315,7 @@ function refreshPage(page) {
 
 function screenPage(page) {
   const d = state.design; const D = dest(); const b = budgets(d, ESTIMATE); const C = b.C;
-  const idx = PAGES.indexOf(page); const left = page.steps.filter((k) => !d.why[k]).length;
+  const idx = PAGES.indexOf(page);
   const ctx = { D, C, b };
   return `${header()}${hudHTML()}<main>${debugBar()}
     <div class="eyebrow"><span class="role">Subsystem ${idx + 1} of ${PAGES.length} · ${LEAD[page.who]}</span></div>
@@ -331,12 +327,12 @@ function screenPage(page) {
     <div id="gauges">${gaugesHTML(page.who, page.rows)}</div>
     <div id="rip">${rippleHTML()}</div>
     <div id="dash">${dashHTML()}</div>
-    ${page.steps.map((k) => `<div class="card"><h3>${STEP[k].label} ${reasonLabel(k)}</h3>${optionsHTML(STEP[k])}</div>`).join('')}
-    <p class="note">Every part is a trade, shown at its usual size. Tap the number you are optimising for to choose it and record why (green is the best of the options).${left ? ` ${left} still need${left === 1 ? 's' : ''} a reason.` : ''}</p>
+    ${page.steps.map((k) => `<div class="card"><h3>${STEP[k].label}</h3>${optionsHTML(STEP[k])}</div>`).join('')}
+    <p class="note">Every part is a trade, shown at its usual size. Tap a part to choose it (green is the best of the options on that number).</p>
     ${slidersHTML(page)}
     <div id="charts">${chartsHTML(page)}</div>
     <details class="who"><summary>Who needs what</summary><section class="alloc">${ifacePanel(page.steps[0])}</section></details>
-  </main>${nav(left === 0, idx === PAGES.length - 1 ? 'Review' : 'Next')}`;
+  </main>${nav(true, idx === PAGES.length - 1 ? 'Review' : 'Next')}`;
 }
 
 // The decision record: what each lead chose, why, whether it was the best on that reason, and
@@ -344,7 +340,7 @@ function screenPage(page) {
 function decisionHTML() {
   return decisions(state.design).map((x) => {
     const gave = gaveUp(x).slice(0, 2).map((g) => `${g.crit.label} ${fmtC(g.crit, g.value)} (best ${fmtC(g.crit, g.best)}, ${esc(g.bestOption)})`).join(' · ');
-    return `<div class="vrow ${x.whyBest === false ? 'yellow' : 'green'}"><div><div>${x.label}: ${esc(x.option.name)} <span class="rmeta">${x.why ? `for ${x.why.label}` : 'no reason recorded'}</span></div>
+    return `<div class="vrow ${x.whyBest === false ? 'yellow' : 'green'}"><div><div>${x.label}: ${esc(x.option.name)}</div>
       <small>${x.whyBest === false ? `Not the best on ${x.why.label}: ${esc(x.gaps.find((g) => g.crit.id === x.why.id).bestOption)} is. ` : ''}${gave ? `Gave up: ${gave}` : x.whyBest === false ? 'Best on the other criteria.' : 'Best on every criterion.'}</small></div></div>`;
   }).join('');
 }
@@ -384,7 +380,7 @@ function screenReview() {
     <p class="note">Each page's mini-challenge: meet the requirement with the least of its own cost.</p>
     <div class="verify">${challengeRows}</div>
     <h2>Decision record</h2>
-    <p class="note">Each trade you made and what it gave up. Yellow means another option was better on your stated reason.</p>
+    <p class="note">Each trade you made and what it gave up.</p>
     <div class="verify">${rows}</div>
     ${over ? `<div class="warn">Launch blocked: over budget by $${R(b.cost - b.budget)}M.</div>` : ''}
   </main>${nav(!over, 'Launch')}`;
@@ -589,9 +585,9 @@ function screenDebrief() {
   const lessons = [];
   if (first && first.stars < 2) lessons.push(['A flight test finds what paper cannot.', `Round 1 ${first.outcome === 'none' ? 'failed' : 'fell short'}${first.req ? ` on ${first.req}` : ''}. Every failure traced back to a choice someone made for good reasons.`]);
   lessons.push(['Requirements flow down.', 'A choice by one lead became a requirement on another: the transmitter loaded Power, the fuel loaded the rocket, the route set the radiation dose.']);
-  const dec = decisions(state.design); const hit = dec.filter((x) => x.whyBest).length;
+  const dec = decisions(state.design); const hit = dec.filter((x) => !x.gaps.length).length;
   const big = dec.flatMap((x) => gaveUp(x).map((g) => ({ x, g }))).sort((a, c) => c.g.gap - a.g.gap)[0];
-  lessons.push(['Every choice is a trade.', `${hit} of ${dec.length} choices were the best option on their stated reason.${big ? ` Biggest give-up: ${big.x.option.name} (${big.x.label}) gave up ${big.g.crit.label}, ${fmtC(big.g.crit, big.g.value)} against ${fmtC(big.g.crit, big.g.best)}.` : ''} Writing the reason down is how a team revisits it when requirements change.`]);
+  lessons.push(['Every choice is a trade.', `${hit} of ${dec.length} choices were the best option on every criterion.${big ? ` Biggest give-up: ${big.x.option.name} (${big.x.label}) gave up ${big.g.crit.label}, ${fmtC(big.g.crit, big.g.value)} against ${fmtC(big.g.crit, big.g.best)}.` : ''}`]);
   lessons.push(['Requirements change.', `In round 2 the contract was amended (${amendment() || 'new goal and funding'}). A design is only as good as its latest requirements.`]);
   lessons.push(['Margin is a choice.', `Your final design's closest call: ${closestCall(budgets(state.design, ESTIMATE)) || 'n/a'}. Launch adds mass growth and one surprise, so thin margin is a bet.`]);
   return `${header()}<main><h1>Mission debrief</h1>

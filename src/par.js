@@ -49,7 +49,7 @@ export const PAR = {
  },
  "lunar-spec": {
   "base": {
-   "cost": 342,
+   "cost": 302,
    "design": {
     "contract": "lunar-spec",
     "changed": false,
@@ -64,9 +64,9 @@ export const PAR = {
     "radiator": 8,
     "shield": 1,
     "tank": "ti",
-    "fuel": 1000,
+    "fuel": 400,
     "engine": "mono",
-    "traj": "direct",
+    "traj": "assist",
     "launcher": "light"
    }
   },

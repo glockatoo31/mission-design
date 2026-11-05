@@ -154,7 +154,7 @@ export const PAYLOADS = [
 // contract and makes the round-1 winner stop winning.
 export const CONTRACTS = [
   { id: 'lunar-survey', name: 'Lunar Pathfinder', dest: 'moon', payload: 'cam', goalGb: 70, deadline: 0.25, budget: 350, brief: 'Land near the south pole. Fast and cheap.', change: { patch: { payload: 'hires', goalGb: 300, budget: 445 } }  },
-  { id: 'lunar-spec', name: 'South Pole Spectrometry', dest: 'moon', payload: 'spec', goalGb: 300, deadline: 0.5, budget: 390, brief: 'Survive the lunar night and map the ice.', change: { patch: { payload: 'hires', goalGb: 900, budget: 445 } } },
+  { id: 'lunar-spec', name: 'South Pole Ice Survey', dest: 'moon', payload: 'cam', goalGb: 75, deadline: 0.5, budget: 344, brief: 'Survive the lunar night and photograph the ice.', change: { patch: { payload: 'hires', goalGb: 900, budget: 445 } } },
   { id: 'mars-survey', name: 'Mars Survey Lander', dest: 'mars', payload: 'cam', goalGb: 150, deadline: 1.5, budget: 250, brief: 'Ride out the dust storm and send pictures home.', change: { patch: { payload: 'spec', goalGb: 225, budget: 295 } } },
   { id: 'mars-radar', name: 'Mars Subsurface Radar', dest: 'mars', payload: 'hires', goalGb: 1500, deadline: 3, budget: 370, brief: 'Radar under the surface. Heavy, hungry, huge data.', change: { patch: { goalGb: 2250, budget: 375 } } },
   { id: 'mercury-survey', name: 'Mercury Surveyor', dest: 'mercury', payload: 'cam', goalGb: 150, deadline: 8, budget: 250, brief: 'Orbit Mercury and map the surface.', change: { patch: { payload: 'spec', goalGb: 450, budget: 305 } } },

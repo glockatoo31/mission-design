@@ -27,7 +27,7 @@ export const PAR = {
  },
  "europa-spec": {
   "base": {
-   "cost": 502,
+   "cost": 495,
    "design": {
     "contract": "europa-spec",
     "changed": false,
@@ -41,9 +41,9 @@ export const PAR = {
     "thermal": "mli",
     "radiator": 1,
     "shield": 8,
-    "tank": "ti",
+    "tank": "cope",
     "fuel": 400,
-    "engine": "biprop",
+    "engine": "mono",
     "traj": "direct",
     "launcher": "f9"
    }

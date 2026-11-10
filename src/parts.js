@@ -6,9 +6,9 @@
 // flight-proven parts grows little, a design full of new parts can grow a lot.
 
 export const HERITAGE = {
-  proven: { label: 'Flight-proven', growth: 0.05 },
-  qualified: { label: 'Qualified', growth: 0.12 },
-  new: { label: 'New design', growth: 0.25 },
+  proven: { label: 'Flight-proven', growth: 0.03 },
+  qualified: { label: 'Qualified', growth: 0.07 },
+  new: { label: 'New design', growth: 0.15 },
 };
 
 // Antennas. rate multiplies the data rate for the same dish and transmitter; mass and cost

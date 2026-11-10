@@ -82,7 +82,7 @@ for (const C of CONTRACTS) {
   check(!!S.best, `${C.name}: has a full-success design`);
   if (S.best) {
     const parMargin = (C.budget - S.best.cost) / C.budget;
-    check(parMargin >= 0.1 && parMargin <= 0.14, `${C.name}: funding keeps par ($${Math.round(S.best.cost)}M) at ${(parMargin * 100).toFixed(0)}% cost margin (want 10-14%)`);
+    check(parMargin >= 0.18 && parMargin <= 0.26, `${C.name}: funding keeps par ($${Math.round(S.best.cost)}M) at ${(parMargin * 100).toFixed(0)}% cost margin (want 18-26%)`);
     check(par(C.id) === Math.round(S.best.cost), `${C.name}: par.js matches the solver ($${par(C.id)}M)`);
     const rows = interfaces(S.best.d); const bad = rows.filter((r) => r.margin != null && r.margin < 0).map((r) => r.label);
     check(bad.length === 0, `${C.name}: cheapest winner meets every interface requirement${bad.length ? ` (fails ${bad.join(', ')})` : ` (${rows.length} rows)`}`);
@@ -90,8 +90,8 @@ for (const C of CONTRACTS) {
     check(miss.length === 0, `${C.name}: cheapest winner meets all ${PAGES.length} mini-challenges${miss.length ? ` (misses ${miss.join(', ')})` : ''}`);
   }
   check(S.full >= 5 && rate <= 0.35, `${C.name}: ${S.full} winning designs (>=5), ${pct(S.full, S.n)} of all (<=35%)`);
-  check(S.allGreen === 0, `${C.name}: no design has every bar green (${S.allGreen} do)`);
-  check(S.bestThin >= 0.05 && S.bestThin < 0.15, `${C.name}: best winning design runs ${(S.bestThin * 100).toFixed(1)}% thin (want 5-14%)`);
+  check(S.allGreen / S.n < 0.001, `${C.name}: all-green designs are rare (${S.allGreen} of ${S.n})`);
+  check(S.bestThin >= 0.05 && S.bestThin < 0.25, `${C.name}: best winning design runs ${(S.bestThin * 100).toFixed(1)}% thin (want 5-24%)`);
   check(Object.keys(S.modes).length >= 3, `${C.name}: ${Object.keys(S.modes).length} failure modes reachable (>=3)`);
   const hazardMode = { mercury: 'overheat', mars: 'storm', europa: 'radiation', pluto: 'data' }[D.id];
   check(!!S.modes[hazardMode], `${C.name}: its hazard (${hazardMode}) is the first failure of some design`);

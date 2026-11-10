@@ -31,7 +31,7 @@ Three rounds, about five minutes each.
    radiator and shielding, fuel).
 
    **Heritage matters.** How much heavier than planned the hardware comes out at launch depends on how proven
-   each part is, weighted by its mass (5% for flight-proven, 12% qualified, 25% new), and launch day decides how
+   each part is, weighted by its mass (3% for flight-proven, 7% qualified, 15% new), and launch day decides how
    much of it shows up. A cheap, new part has a hidden cost.
 
    Every part is also a small **trade study**: each option shows its numbers at its usual size on criteria that
@@ -87,7 +87,7 @@ Every part type is tried at several sizes: 192,000 designs per contract (576,000
 survive: Mars and Mercury, which also try three battery sizes). The test streams all of them through the same
 `src/model.js` the app uses, for every contract (a few minutes), and checks that:
 
-- every contract has winning designs and funding keeps the par cost 10-14% inside it; `src/par.js` (the stored cheapest designs) matches the solver
+- every contract has winning designs and funding keeps the par cost 18-26% inside it; `src/par.js` (the stored cheapest designs) matches the solver
 - no design has every bar green, and the best winner runs 5-14% thin
 - each contract has at least three reachable failure modes including its own hazard
 - interface demands add up to the need (power, heat, lift, cost), and a failure traces to the interface in deficit

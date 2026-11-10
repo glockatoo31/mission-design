@@ -130,20 +130,10 @@ const partName = (c) => {
 // Round 3: every budget at once, who owns it, and the coupling map lit on the weakest one.
 function dashHTML() {
   if (!showAll()) return '';
-  const ch = charts(); if (!ch) return '';
-  const keys = CHART_ORDER.filter((k) => ch[k] && typeof ch[k].margin === 'number');
-  if (!keys.length) return '';
-  const worst = keys.reduce((a, k) => (ch[k].margin < ch[a].margin ? k : a), keys[0]);
-  const level = marginColor(ch[worst].margin); // 'green' | 'yellow' | 'red'
-  const bad = level !== 'green' ? worst : null;
-  // Round 3 help: where to fix first, and which pages have slack to trade.
-  const fixPage = bad ? (PAGES.find((p) => p.charts.includes(bad)) || PAGES.find((p) => p.who === ownerOf(bad))) : null;
-  const slack = PAGES.filter((p) => { const cs = challengeState(p, state.design); return cs.met && !cs.lean; });
-  const jump = (p) => `<button class="tab" data-act="goto" data-key="${p.key}">${p.title}</button>`;
-  const help = `${fixPage ? `<p class="hint"><b>Fix first:</b> ${CHART_LABEL[bad]} is ${level === 'red' ? 'short' : 'thin'}. ${jump(fixPage)}</p>` : ''}${slack.length ? `<p class="hint"><b>Room to trade:</b> these are over-built. Trim one to pay for the fix. ${slack.map(jump).join('')}</p>` : ''}`;
-  return `<details class="dash" open><summary>Team dashboard</summary>${help}
-    <div class="gauges">${keys.map((k) => `<span class="g ${marginColor(ch[k].margin)}">${CHART_LABEL[k]} <b>${fPct(ch[k].margin)}</b></span>`).join('')}</div>
-    ${couplingMap(state.design, partName, bad, level)}</details>`;
+  const h = roundHelp(); if (!h) return '';
+  const chips = h.keys.map((k) => `<span class="chip ${marginColor(h.ch[k].margin)}"><i>${BUD_SHORT[k]}</i><b>${fPct(h.ch[k].margin)}</b></span>`).join('');
+  const line = `${h.bad ? `<b>Fix:</b> ${CHART_LABEL[h.bad]} ${h.level === 'red' ? 'short' : 'thin'}` : '<b>All budgets OK</b>'}${h.slack.length ? ` · <b>Trim:</b> ${h.slack.map((p) => TAB_SHORT[p.key]).join(', ')}` : ''}`;
+  return `<div class="dash"><div class="chips">${chips}</div><p class="hint">${line}</p></div>`;
 }
 
 // ---------- choices: a trade table for every part ----------
@@ -180,27 +170,26 @@ function setChoice(k, id, whyId) {
 // Round 3: a tab per subsystem (and Review) to jump straight to any of them.
 function tabsHTML() {
   if (!showAll() || !(PAGE[key()] || key() === 'review')) return '';
-  const tab = (k, label) => `<button class="tab ${key() === k ? 'on' : ''}" data-act="goto" data-key="${k}">${label}</button>`;
-  return `<div class="tabs">${PAGES.map((p) => tab(p.key, p.title)).join('')}${tab('review', 'Review')}</div>`;
+  const h = roundHelp();
+  const tab = (k) => `<button class="tab ${key() === k ? 'on' : ''} ${h && h.fixPage && h.fixPage.key === k ? 'fix' : h && h.slack.some((p) => p.key === k) ? 'slack' : ''}" data-act="goto" data-key="${k}">${TAB_SHORT[k]}</button>`;
+  return `<div class="tabs">${PAGES.map((p) => tab(p.key)).join('')}${tab('review')}</div>`;
 }
 
 function header() {
   const n = state.step; const tabs = tabsHTML();
-  return `<header class="top${tabs ? ' tabbed' : ''}">
+  return `<header class="top">
     <div class="top-row"><div class="brand">${MARK}Mission Design${DEBUG ? ' <span class="dbg">debug</span>' : ''}</div><span class="rsteps" role="img" aria-label="Round ${roundNo()} of ${MAX_ROUNDS}: ${ROUNDS[roundNo() - 1].name}">${ROUNDS.map((r, i) => `<i class="${i + 1 === roundNo() ? 'on' : i + 1 < roundNo() ? 'done' : ''}">${i + 1}${i + 1 === roundNo() ? ` ${r.name}` : ''}</i>`).join('')}</span></div>
-    <div class="countdown"><b>${n >= stepOf('launch') ? 'T+0' : `T−${stepOf('launch') - n}`}</b> · ${stepName(key())}</div>
-    ${tabs}
+    ${tabs || `<div class="countdown"><b>${n >= stepOf('launch') ? 'T+0' : `T−${stepOf('launch') - n}`}</b> · ${stepName(key())}</div>`}
     <i class="prog" style="width:${(100 * n) / (FLOW.length - 1)}%"></i>
   </header>`;
 }
 
 const stepOf = (k) => FLOW.indexOf(k);
 
-function nav(canGo, nextLabel = 'Next') {
+function nav(canGo, nextLabel = 'Next', mid = '') {
   const back = canGoBack() && state.step > 0;
-  const lock = '<span></span>';
   return `<nav class="bottom">
-    ${back ? '<button class="btn ghost" data-act="back">Back</button>' : lock}
+    ${back ? '<button class="btn ghost" data-act="back">Back</button>' : ''}${mid}
     <button class="btn primary" data-act="next" ${canGo ? '' : 'disabled'}>${nextLabel}</button>
   </nav>`;
 }
@@ -215,20 +204,15 @@ function screenContract() {
   const cards = CONTRACTS.filter((C) => !DEMO_IDS || DEMO_IDS.includes(C.id)).map((C) => {
     const D = DESTINATIONS.find((x) => x.id === C.dest); const pay = PAYLOADS.find((x) => x.id === C.payload);
     return `<button class="dest ${sel === C.id ? 'sel' : ''}" data-act="contract" data-id="${C.id}">
-      <div class="dest-top"><img class="planet pix" src="${art(`planet_${D.id}`)}" alt="">
-        <div><div class="dest-name">${esc(C.name)}</div><div class="diff" role="img" aria-label="Difficulty ${D.difficulty} of 5">${[1, 2, 3, 4, 5].map((i) => `<i class="${i <= D.difficulty ? 'on' : ''}"></i>`).join('')}</div></div>
-        <span class="mult">×${D.mult} score</span></div>
-      <div class="kv"><span>Instrument</span><b>${esc(pay.name)}</b></div>
-      <div class="kv"><span>Science goal</span><b>${C.goalGb} Gbit</b></div>
-      <div class="kv"><span>Arrive within</span><b>${fmtYr(C.deadline)}</b></div>
-      <div class="kv"><span>Funding</span><b>$${C.budget}M</b></div>
+      <div class="dest-top"><img class="planet pix" src="${art(`planet_${D.id}`)}" alt=""><div class="dest-name">${esc(C.name)}</div></div>
+      <div class="dline">${esc(pay.name)}</div>
+      <div class="dline">${C.goalGb} Gbit · ${fmtYr(C.deadline)} · $${C.budget}M</div>
       <div class="hazard">${ICON.alert}<span>${esc(D.hazard.name)}</span></div>
     </button>`;
   }).join('');
   return `${header()}<main><h1>Contract board</h1>
     <p class="lead">Pick a mission. You fly it three times: blind, then seeing one subsystem's budgets at a time, then seeing everyone's.</p>
-    <div class="dests">${cards}</div>
-    <button class="link" data-act="reset">Start over (new team)</button></main>${nav(!!sel)}`;
+    <div class="dests">${cards}</div></main>${nav(!!sel)}`;
 }
 
 // ---------- requirements and interfaces ----------
@@ -326,7 +310,6 @@ function refreshPage(page) {
   const hud = document.getElementById('hud'); if (hud) hud.outerHTML = hudHTML();
   set('challenge', challengeHTML(page, challengeState(page, state.design), redRows(page)));
   set('gauges', gaugesHTML(page.who, page.rows));
-  set('charts', chartsHTML(page));
   set('trajmap', trajMapSVG(dest(), state.design.traj));
   set('craft', craftSVG(state.design, { screen: page.craft }));
   set('rip', rippleHTML());
@@ -334,23 +317,18 @@ function refreshPage(page) {
 }
 
 function screenPage(page) {
-  const d = state.design; const D = dest(); const b = budgets(d, ESTIMATE); const C = b.C;
-  const idx = PAGES.indexOf(page);
-  const ctx = { D, C, b };
-  return `${header()}${hudHTML()}<main>${debugBar()}
-    <div class="eyebrow"><span class="role">Subsystem ${idx + 1} of ${PAGES.length}</span></div>
+  const d = state.design; const D = dest();
+  const idx = PAGES.indexOf(page); const traj = page.key === 'traj';
+  const mid = showBudgets() ? `<button class="btn ghost" data-act="sheet" data-kind="page" data-page="${page.key}">Graphs</button>` : '';
+  return `${header()}<main class="fit ${page.steps.length > 1 ? 'two' : ''}">${debugBar()}
     <h1>${page.title}: ${page.name}</h1>
     <div id="challenge">${challengeHTML(page, challengeState(page, d), redRows(page))}</div>
-    ${page.key === 'traj' ? `<div class="craft-wrap" id="trajmap">${trajMapSVG(D, d.traj)}</div>` : ''}
-    <div class="craft-wrap" id="craft">${craftSVG(d, { screen: page.craft })}</div>
-    <div id="gauges">${gaugesHTML(page.who, page.rows)}</div>
+    <div class="visual" id="${traj ? 'trajmap' : 'craft'}">${traj ? trajMapSVG(D, d.traj) : craftSVG(d, { screen: page.craft })}</div>
+    ${showAll() ? `<div id="dash">${dashHTML()}</div>` : `<div id="gauges">${gaugesHTML(page.who, page.rows)}</div>`}
     <div id="rip">${rippleHTML()}</div>
-    <div id="dash">${dashHTML()}</div>
-    ${page.steps.map((k) => `<div class="card"><h3>${STEP[k].label}</h3>${optionsHTML(STEP[k])}</div>`).join('')}
+    ${page.steps.map((k) => `<div class="card">${optionsHTML(STEP[k])}</div>`).join('')}
     ${slidersHTML(page)}
-    <div id="charts">${chartsHTML(page)}</div>
-    <details class="who"><summary>Who needs what</summary><section class="alloc">${ifacePanel(page.steps[0])}</section></details>
-  </main>${nav(true, idx === PAGES.length - 1 ? 'Review' : 'Next')}`;
+  </main>${nav(true, idx === PAGES.length - 1 ? 'Review' : 'Next', mid)}`;
 }
 
 // The decision record: what each lead chose, why, whether it was the best on that reason, and
@@ -365,38 +343,19 @@ function decisionHTML() {
 function screenReview() {
   const d = state.design;
   if (!isComplete(d)) return `${header()}<main><h1>Design review</h1><p>Some parts are missing.</p></main>${nav(false)}`;
-  const b = budgets(d, ESTIMATE); const C = b.C; const P = b.P;
-  const rows = decisionHTML();
+  const b = budgets(d, ESTIMATE);
   if (!showAll()) {
-    return `${header()}<main><h1>Final design</h1>
-      <div class="craft-wrap">${craftSVG(d)}</div>
-      <h2>Decision record</h2><div class="verify">${rows}</div>
-    </main>${nav(true, 'Launch')}`;
+    const parts2 = decisions(d).map((x) => `<span class="pc"><i>${x.label}</i> ${esc(x.option.name)}</span>`).join('');
+    return `${header()}<main class="fit"><h1>Final design</h1><div class="visual">${craftSVG(d)}</div><div class="partgrid">${parts2}</div></main>${nav(true, 'Launch')}`;
   }
-  const ch = buildCharts(d, ESTIMATE);
-  const keys = CHART_ORDER.filter((k) => ch[k]);
-  const reqs = requirements(d); const ifs = interfaces(d).filter((r) => r.margin != null);
-  const reds = reqs.filter((r) => r.status === 'red').length; const yellows = reqs.filter((r) => r.status === 'yellow').length;
-  const over = b.cost > b.budget;
-  const challengeRows = PAGES.map((p) => {
-    const cs = challengeState(p, d);
-    return `<div class="vrow ${cs.met ? (cs.lean ? 'green' : 'yellow') : 'red'}"><div><div>${p.title}: ${p.name}</div><small>${cs.met ? (cs.lean ? 'Met, and lean' : 'Met, but over-built') : 'Not met'} · ${LEAD[p.who]}</small></div></div>`;
-  }).join('');
-  const ifRow = (r) => `<div class="vrow ${r.status}"><div><div>${r.label}</div><small>${fmtU(r.need, r.unit)} needed of ${fmtU(r.have, r.unit)} provided</small>${sourcesHTML(r)}</div><span class="r-m">${fPct(r.margin)}</span></div>`;
-  return `${header()}<main><h1>Design review</h1>
-    <div class="craft-wrap">${craftSVG(d)}</div>
-    <h2>System requirements</h2>
-    <div class="summary">${reds ? `<b class="red-t">${reds} failing</b> · ` : ''}${yellows ? `<b class="yellow-t">${yellows} thin</b> · ` : ''}${!reds && !yellows ? '<b class="green-t">All verified</b>' : ''}</div>
-    <div class="verify">${reqs.map((r) => `<div class="vrow ${r.status}"><b class="rid">${r.id}</b><div><div>${esc(r.text)}</div><small>${r.by}</small></div><span class="r-m">${fPct(r.margin)}</span></div>`).join('')}</div>
-    <h2>Interface requirements</h2>
-    <div class="verify">${ifs.map(ifRow).join('')}</div>
-    <details class="picks"><summary>All budget graphs</summary><div class="chart-grid">${keys.map((k) => renderChart(ch[k])).join('')}</div></details>
-    <h2>Subsystem challenges</h2>
-    <div class="verify">${challengeRows}</div>
-    <h2>Decision record</h2>
-    <div class="verify">${rows}</div>
+  const reqs = requirements(d); const over = b.cost > b.budget;
+  const chal = PAGES.map((p) => { const cs = challengeState(p, d); return `<span class="chip ${cs.met ? (cs.lean ? 'green' : 'yellow') : 'red'}"><i>${TAB_SHORT[p.key]}</i><b>${cs.met ? (cs.lean ? 'lean' : 'heavy') : 'unmet'}</b></span>`; }).join('');
+  return `${header()}<main class="fit"><h1>Design review</h1>
+    <div class="visual">${craftSVG(d)}</div>
+    <div class="verify">${reqs.map((r) => `<div class="vrow ${r.status}"><b class="rid">${r.id}</b><div>${esc(r.name)}</div><span class="r-m">${fPct(r.margin)}</span></div>`).join('')}</div>
+    <div class="chips six">${chal}</div>
     ${over ? `<div class="warn">Launch blocked: over budget by $${R(b.cost - b.budget)}M.</div>` : ''}
-  </main>${nav(!over, 'Launch')}`;
+  </main>${nav(!over, 'Launch', '<button class="btn ghost" data-act="sheet" data-kind="review">Details</button>')}`;
 }
 
 function historyHTML() {
@@ -407,12 +366,10 @@ const tierName = (o) => ({ none: 'No mission', min: 'Minimum', full: 'Full succe
 
 // ---------- launch screen ----------
 function screenLaunch() {
-  return `${header()}<main class="launch">
+  return `${header()}<main class="launch fit">
     <div id="banner"></div>
-    ${state.attempt > 1 ? '<button class="btn small ff" data-act="ff" aria-pressed="false">2x &gt;&gt;</button>' : ''}
-    <div class="phase-name" id="phase">Countdown</div>
-    <div class="clock" id="clock">T-0</div>
-    <div class="scene-wrap" id="scene"></div>
+    <div class="lrow"><div class="phase-name" id="phase">Countdown</div><div class="clock" id="clock">T-0</div>${state.attempt > 1 ? '<button class="btn small ff" data-act="ff" aria-pressed="false">2x</button>' : ''}</div>
+    <div class="scene-wrap visual" id="scene"></div>
     <div class="track" id="track"></div>
     <div class="phases" id="phases"></div>
     <ul class="log" id="log"></ul>
@@ -526,44 +483,39 @@ function showResult(res) {
   }
   const chains = explain(d, res);
   const closest = !f ? closestCall(res.b) : null;
-  const ev = res.opts.event;
   // The graph of the budget that broke, flown with the real launch conditions.
   const ch = buildCharts(d, res.opts, f);
   const fk = chartForFailure(f, res.b);
   const failChart = ch && fk && ch[fk] ? renderChart(ch[fk]) : '';
   const map = f ? `${couplingMap(d, partName, fk)}` : '';
   const later = f ? downstream(res, fk) : [];
-  const warnLater = later.length ? `<div class="warn">Downstream Warning: Even if you survived ${fk ? CHART_LABEL[fk].toLowerCase() : 'that'}, this design also failed ${later.map((k) => CHART_LABEL[k].toLowerCase()).join(' and ')}.</div>` : '';
-  // Trace the failed requirement back through the interface that carried it: who asked for what.
-  const fr = f ? interfaces(d).find((r) => r.label === failRow(f, res.b)) : null;
+  const warnLater = later.length ? `<div class="warn">Even if you survived ${fk ? CHART_LABEL[fk].toLowerCase() : 'that'}, this design also failed ${later.map((k) => CHART_LABEL[k].toLowerCase()).join(' and ')}.</div>` : '';
   const reqLine = !rq ? '' : `<p class="a-req"><b>${rq.id} not met:</b> ${esc(rq.text)}</p>`;
-  // The trade behind the failure: the decision that gave up the criterion this interface row measures.
+  // The detail sheet: the failure in full (graph, map, causes) and the round history.
+  resultDetails = `${f ? `<section class="anomaly"><p class="a-what">${esc(f.text)}</p>${reqLine}${warnLater}${failChart}${map}
+      ${chains.slice(0, 1).map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('')}
+      ${chains.length > 1 ? chains.slice(1).map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('') : ''}</section>`
+      : over ? `<section class="anomaly"><p class="a-req"><b>Over budget</b> by ${f$(res.cost - res.b.budget)}</p></section>`
+      : `<section class="anomaly good"><p>${closest ? `Closest call: <b>${closest}</b>` : 'All constraints held'}</p></section>`}${historyHTML()}`;
+  const line = f ? esc(f.text) : over ? `Over budget by ${f$(res.cost - res.b.budget)}` : closest ? `Closest call: ${closest}` : 'All constraints held';
   document.getElementById('result').innerHTML = `
     <div class="outcome ${res.outcome}">
-      <div class="o-stars" role="img" aria-label="${stars} of 3 stars">${starsOf(stars)}</div>
-      <div class="o-tier">${tierName(res.outcome)}</div>
+      <div class="o-row"><div class="o-stars" role="img" aria-label="${stars} of 3 stars">${starsOf(stars)}</div><div class="o-tier">${tierName(res.outcome)}</div></div>
       <div class="o-grid">
         <div><span>Score</span><b>${res.score}</b></div>
         <div><span>Science</span><b>${fmtGb(res.scienceGb)}</b></div>
         <div><span>Cost</span><b>${f$(res.cost)}</b></div>
-        <div><span>Team code</span><b class="code">${code}</b></div>
+        <div><span>Par</span><b>${f$(parCost)}</b></div>
       </div>
-      <div class="o-note">Cost ${f$(res.cost)} · par ${f$(parCost)}</div>
     </div>
-    ${f ? `<section class="anomaly"><h2>Anomaly report</h2><p class="a-what">${esc(f.text)}</p>
-      ${reqLine}${warnLater}
-      ${failChart}
-      ${map}
-      ${chains.slice(0, 1).map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('')}
-      ${chains.length > 1 ? `<details class="picks"><summary>More causes</summary>${chains.slice(1).map((c) => `<ol class="chain">${c.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`).join('')}</details>` : ''}
-      </section>` : over ? `<section class="anomaly"><h2>Requirement check</h2><p class="a-req"><b>Over budget</b> by ${f$(res.cost - res.b.budget)}</p></section>`
-      : `<section class="anomaly good"><h2>Mission report</h2><p>${closest ? `Closest call: <b>${closest}</b>` : 'All constraints held'}</p></section>`}
-    ${historyHTML()}
-    <div class="end-actions">
-      ${last ? '<button class="btn primary" data-act="finish">Mission debrief</button>' : `<button class="btn primary" data-act="redesign">Round ${state.attempt + 1}</button>`}
+    <p class="a-line">${line}</p>
+    ${!f && !over ? '' : `<p class="a-hint">Try next: ${esc(HINT[f ? f.mode : 'cost'] || 'Open Why? and fix the bar in red.')}</p>`}
+    <div class="end-actions two">
+      <button class="btn ghost" data-act="sheet" data-kind="result">Why?</button>
+      ${last ? '<button class="btn primary" data-act="finish">Debrief</button>' : `<button class="btn primary" data-act="redesign">Round ${state.attempt + 1}</button>`}
     </div>`;
+  document.querySelector('main.launch')?.classList.add('done');
   document.querySelector('.ff')?.remove();
-  if (!DEBUG) document.getElementById('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // Chief engineer's note: up to two other budgets that would also have killed this design,
@@ -575,6 +527,15 @@ function downstream(res, fk) {
   return [...new Set(keys)].filter((k) => k && k !== fk).slice(0, 2);
 }
 
+// One plain nudge toward the fix for each way a flight can fail.
+const HINT = {
+  launcher: 'Try a bigger rocket, or trim mass elsewhere.', deadline: 'Try the faster route, or a faster engine.',
+  flyby: 'Add thermal or shielding, or take the other route.', life: 'Pick parts with a longer design life.',
+  radiation: 'Add shielding, or spend less time near the radiation.', insertion: 'Add fuel or a more efficient engine.',
+  overheat: 'Add radiators, or shrink what makes heat.', brownout: 'Add power, or cut the loads.',
+  freeze: 'Add power for the heaters.', night: 'Add battery for the dark.', storm: 'Add array area or battery for the storm.',
+  data: 'Bigger antenna, more transmit power, or longer contact.', cost: 'Cut cost: smaller parts, a cheaper rocket.',
+};
 function closestCall(b) {
   const opts = [['Mass', b.massMargin], ['Power', b.powerMargin], ['Delta-v', b.dvMargin], ['Data', b.dataMargin], ['Thermal', b.thermalMargin], ['Radiation', b.radMargin], ['Cost', b.costMargin], ['Design life', b.lifeMargin], ['Schedule', b.timeMargin]];
   const m = opts.filter((x) => typeof x[1] === 'number').sort((a, c) => a[1] - c[1])[0];
@@ -617,6 +578,48 @@ function screenDebrief() {
     ${historyHTML()}
     <div class="end-actions"><button class="btn primary" data-act="newgame">New mission</button></div>
   </main>`;
+}
+
+const BUD_SHORT = { power: 'Power', thermal: 'Heat', rad: 'Rad', data: 'Data', time: 'Time', cost: 'Cost', mass: 'Mass', dv: 'Fuel', life: 'Life', night: 'Dark' };
+const TAB_SHORT = { comms: 'Comms', thermal: 'Thermal', power: 'Power', traj: 'Route', prop: 'Engine', rocket: 'Rocket', review: 'Review' };
+
+function roundHelp() {
+  const ch = charts(); if (!ch) return null;
+  const keys = CHART_ORDER.filter((k) => ch[k] && typeof ch[k].margin === 'number'); if (!keys.length) return null;
+  const worst = keys.reduce((a, k) => (ch[k].margin < ch[a].margin ? k : a), keys[0]);
+  const level = marginColor(ch[worst].margin); // 'green' | 'yellow' | 'red'
+  const bad = level !== 'green' ? worst : null;
+  const fixPage = bad ? (PAGES.find((p) => p.charts.includes(bad)) || PAGES.find((p) => p.who === ownerOf(bad))) : null;
+  const slack = PAGES.filter((p) => { const cs = challengeState(p, state.design); return cs.met && !cs.lean; });
+  return { ch, keys, worst, level, bad, fixPage, slack };
+}
+
+function reviewDetails() {
+  const d = state.design; const b = budgets(d, ESTIMATE);
+  const ch = buildCharts(d, ESTIMATE); const keys = CHART_ORDER.filter((k) => ch && ch[k]);
+  const reqs = requirements(d); const ifs = interfaces(d).filter((r) => r.margin != null);
+  const ifRow = (r) => `<div class="vrow ${r.status}"><div><div>${r.label}</div><small>${fmtU(r.need, r.unit)} needed of ${fmtU(r.have, r.unit)} provided</small>${sourcesHTML(r)}</div><span class="r-m">${fPct(r.margin)}</span></div>`;
+  return `<h2>System requirements</h2><div class="verify">${reqs.map((r) => `<div class="vrow ${r.status}"><b class="rid">${r.id}</b><div><div>${esc(r.text)}</div><small>${r.by}</small></div><span class="r-m">${fPct(r.margin)}</span></div>`).join('')}</div>
+    <h2>Interfaces</h2><div class="verify">${ifs.map(ifRow).join('')}</div>
+    <h2>Budgets</h2><div class="chart-grid">${keys.map((k) => renderChart(ch[k])).join('')}</div>
+    <h2>Decisions</h2><div class="verify">${decisionHTML()}</div>`;
+}
+
+// A full-screen sheet for the detail a phone screen cannot hold at once. It scrolls inside itself.
+let resultDetails = '';
+function openSheet(kind, pageKey) {
+  const d = state.design; let title = 'Details'; let body = '';
+  if (kind === 'result') { title = 'What happened'; body = resultDetails; }
+  else if (kind === 'review') { title = 'Review details'; body = reviewDetails(); }
+  else {
+    const page = PAGE[pageKey]; const ch = buildCharts(d, ESTIMATE); const h = showAll() ? roundHelp() : null;
+    const keys = showAll() ? CHART_ORDER : page.charts;
+    title = showAll() ? 'All budgets' : `${page.title} budgets`;
+    body = `<div class="chart-grid">${keys.filter((k) => ch && ch[k]).map((k) => renderChart(ch[k])).join('')}</div>
+      ${showAll() ? couplingMap(d, partName, h && h.bad, h ? h.level : 'red') : ''}
+      <section class="alloc">${ifacePanel(page.steps[0])}</section>`;
+  }
+  $app.insertAdjacentHTML('beforeend', `<div class="sheet" id="sheet"><div class="sheet-head"><b>${title}</b><button class="btn small" data-act="close-sheet">Close</button></div><div class="sheet-body">${body}</div></div>`);
 }
 
 // ---------- render + events ----------
@@ -681,6 +684,8 @@ $app.addEventListener('click', (e) => {
     speed = speed === 1 ? 2 : 1;
     el.setAttribute('aria-pressed', String(speed === 2));
   } else if (act === 'next') go(Math.min(FLOW.length - 1, state.step + 1));
+  else if (act === 'sheet') openSheet(el.dataset.kind, el.dataset.page);
+  else if (act === 'close-sheet') document.getElementById('sheet')?.remove();
   else if (act === 'goto') go(stepOf(el.dataset.key));
   else if (act === 'back') { if (canGoBack()) go(Math.max(0, state.step - 1)); }
   else if (act === 'redesign') { state.attempt += 1; state.design.why = {}; state.transition = true; go(stepOf('reqs')); }

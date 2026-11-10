@@ -136,13 +136,13 @@ export const PAYLOADS = [
 // The hard constraints: where, which instrument, how much science, arrive by the deadline
 // (years after launch), and the funding cap (the contract ends when the money does).
 // The par cost (cheapest full success) is computed live by the solver in model.js. Funding is
-// set about 12% above par (npm run balance checks it): a design with a green cost bar is too
+// set about 22% above par (npm run balance checks it): a design with a green cost bar is too
 // cheap to be robust. The contract stays the same in all three rounds.
 export const CONTRACTS = [
-  { id: 'mars-survey', name: 'Mars Survey Orbiter', dest: 'mars', payload: 'cam', goalGb: 150, deadline: 1.5, budget: 250, brief: 'Orbit Mars through the dust storm and send pictures home.' },
-  { id: 'europa-spec', name: 'Europa Flyby Spectrometry', dest: 'europa', payload: 'spec', goalGb: 90, deadline: 7, budget: 570, brief: 'Fly past Europa before the radiation wins.' },
-  { id: 'mercury-survey', name: 'Mercury Orbiter', dest: 'mercury', payload: 'cam', goalGb: 150, deadline: 8, budget: 250, brief: 'Orbit Mercury and map the surface.' },
-  { id: 'pluto-survey', name: 'Pluto Flyby Imaging', dest: 'pluto', payload: 'hires', goalGb: 2.4, deadline: 9, budget: 885, brief: 'A decade out. Send the pictures home.' },
+  { id: 'mars-survey', name: 'Mars Survey Orbiter', dest: 'mars', payload: 'cam', goalGb: 150, deadline: 1.5, budget: 285, brief: 'Orbit Mars through the dust storm and send pictures home.' },
+  { id: 'europa-spec', name: 'Europa Flyby Spectrometry', dest: 'europa', payload: 'spec', goalGb: 90, deadline: 7, budget: 635, brief: 'Fly past Europa before the radiation wins.' },
+  { id: 'mercury-survey', name: 'Mercury Orbiter', dest: 'mercury', payload: 'cam', goalGb: 150, deadline: 8, budget: 280, brief: 'Orbit Mercury and map the surface.' },
+  { id: 'pluto-survey', name: 'Pluto Flyby Imaging', dest: 'pluto', payload: 'hires', goalGb: 2.4, deadline: 9, budget: 995, brief: 'A decade out. Send the pictures home.' },
 ];
 
 

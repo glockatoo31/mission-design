@@ -16,6 +16,7 @@ import { art } from './art.js';
 import { trajMapSVG } from './route.js';
 import { ICON, MARK } from './icons.js';
 import { craftSVG } from './craft.js';
+import { rocketURL } from './rockets.js';
 import { createScene } from './scene.js';
 
 // ---------- flags + state ----------
@@ -151,6 +152,7 @@ function optionsHTML(step) {
   const btn = (dir) => `<button class="arrow" ${(dir < 0 && i === 0) || (dir > 0 && i === t.options.length - 1) ? 'disabled' : ''} data-act="cycle" data-slot="${step.key}" data-dir="${dir}" aria-label="${dir < 0 ? 'Previous' : 'Next'} ${step.label}">${arrow(dir)}</button>`;
   return `<div class="opt sel">
     <div class="opt-head">${btn(-1)}<div class="opt-name">${esc(o.name)}<small>${i + 1} / ${t.options.length}</small></div>${btn(1)}</div>
+    ${step.key === 'launcher' ? `<img class="rocket-pic pix" src="${rocketURL(o.id)}" alt="${esc(o.name)}">` : ''}
     <p class="opt-blurb">${esc(o.blurb)}</p>
     <div class="crits">${t.criteria.map((c) => `<div class="crit ${t.isBest(o, c) ? 'best' : ''}"><span>${c.label}</span><b>${fmtC(c, o.vals[c.id])}</b></div>`).join('')}</div>
   </div>`;

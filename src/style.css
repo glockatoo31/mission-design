@@ -484,3 +484,4 @@ main.two .opt-blurb { -webkit-line-clamp: 1; }
 .sheet { position: fixed; inset: 0; z-index: 100; background: var(--bg); display: flex; flex-direction: column; max-width: 480px; margin: 0 auto; }
 .sheet-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 2px solid var(--line); }
 .sheet-body { flex: 1; overflow: auto; padding: 12px; }
+.rocket-pic { display: block; margin: 8px auto; height: 150px; width: auto; image-rendering: pixelated; }
